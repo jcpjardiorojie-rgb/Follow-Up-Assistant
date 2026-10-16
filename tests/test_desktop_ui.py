@@ -104,3 +104,31 @@ def test_window_shortcuts_toggle_run_and_scroll(tmp_path):
         app.hk.stop()
         app.ctl.close()
         root.destroy()
+
+
+def test_window_problems_tab(tmp_path):
+    import followup_desk as fd
+    from bridge import Store
+
+    store = Store(tmp_path)
+    root = tk.Tk()
+    app = fd.App(root, store)
+    try:
+        assert "No problems" in app.prob_text.get("1.0", "end")
+        entry = {"time": "2026-10-16T10:00:00", "name": "Odilin Gibson", "status": "FAILED", "reason": "Image didn't attach",
+                 "code": "IMAGE_FAILED", "help": {"what": "The image didn't attach.", "why": "Too big.", "fix": "Use a JPG under 5 MB."}}
+        store.add_problem(entry)
+        app.events.put(("problem", entry))
+        app.events.put(("state", {"state": "paused", "reason": "Paused after 3 problems in a row. See the Problems tab for details."}))
+        end = time.time() + 5
+        while time.time() < end and "Odilin" not in app.prob_text.get("1.0", "end"):
+            root.update()
+            time.sleep(0.05)
+        root.update()
+        text = app.prob_text.get("1.0", "end")
+        assert "Odilin Gibson" in text and "HOW TO FIX  Use a JPG under 5 MB." in text
+        assert app.tabs.tab(app.tabs.select(), "text").strip().startswith("Problems (1)")
+    finally:
+        app.hk.stop()
+        app.ctl.close()
+        root.destroy()

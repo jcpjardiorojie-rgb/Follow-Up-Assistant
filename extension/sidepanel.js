@@ -15,7 +15,8 @@ let settings = {}, template = {}, tabId = null, state = "idle", scrollState = "i
 
 // ---------- storage ----------
 async function loadAll() {
-  const d = await chrome.storage.local.get(["settings", "template", "stats", "log", "campaign"]);
+  const d = await chrome.storage.local.get(["settings", "template", "stats", "log", "campaign", "problems"]);
+  showProblems(d.problems || []);
   settings = Object.assign({}, DEF, d.settings || {});
   template = d.template || { text: DEF.template, imageDataUrl: "", imageName: "" };
   fillForm();
@@ -170,7 +171,10 @@ function showLog(entries) {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || msg.type !== "fu-status") return;
-  if (msg.state) setState(msg.state.state, msg.state.reason, msg.state.current);
+  if (msg.state) {
+    setState(msg.state.state, msg.state.reason, msg.state.current);
+    $("seeProblems").hidden = !(msg.state.state === "paused" && /Problems tab/.test(msg.state.reason || ""));
+  }
   if (msg.stats) showStats(msg.stats);
   if (msg.entry) {
     const ol = $("log");
@@ -184,6 +188,60 @@ chrome.runtime.onMessage.addListener((msg) => {
 chrome.storage.onChanged.addListener((ch) => {
   if (ch.campaign) $("remembered").textContent = `${(ch.campaign.newValue && ch.campaign.newValue.doneIds.length) || 0} chats remembered in this campaign`;
 });
+
+// ---------- tabs and the Problems list ----------
+function showTab(which) {
+  const problems = which === "problems";
+  $("mainView").hidden = problems;
+  $("problemsView").hidden = !problems;
+  $("tabMain").classList.toggle("on", !problems);
+  $("tabProblems").classList.toggle("on", problems);
+  $("tabMain").setAttribute("aria-selected", String(!problems));
+  $("tabProblems").setAttribute("aria-selected", String(problems));
+}
+$("tabMain").addEventListener("click", () => showTab("main"));
+$("tabProblems").addEventListener("click", () => showTab("problems"));
+$("seeProblems").addEventListener("click", () => showTab("problems"));
+
+function problemItem(p) {
+  const li = document.createElement("li");
+  const head = document.createElement("div");
+  head.className = "ph";
+  const who = document.createElement("div");
+  who.textContent = p.name;
+  const when = document.createElement("span");
+  when.textContent = new Date(p.time).toLocaleString();
+  head.append(who, when);
+  const part = (label, text, cls) => {
+    const d = document.createElement("div");
+    if (cls) d.className = cls;
+    const b = document.createElement("b");
+    b.textContent = label + " ";
+    d.append(b, document.createTextNode(text));
+    return d;
+  };
+  li.append(head, part("What happened:", p.help.what), part("Why:", p.help.why), part("How to fix:", p.help.fix, "fix"));
+  return li;
+}
+function showProblems(list) {
+  const today = new Date().toLocaleDateString("en-CA");
+  const n = list.filter((p) => new Date(p.time).toLocaleDateString("en-CA") === today).length;
+  $("probCount").textContent = n;
+  $("probCount").hidden = !n;
+  const ol = $("problems");
+  if (!list.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "No problems. When something goes wrong, it shows up here with how to fix it.";
+    ol.replaceChildren(li);
+    return;
+  }
+  ol.replaceChildren(...list.slice(-100).reverse().map(problemItem));
+}
+$("pClear").addEventListener("click", () => ask("Clear the Problems list?", async () => {
+  await chrome.storage.local.set({ problems: [] }); showProblems([]);
+}));
+chrome.storage.onChanged.addListener((ch) => { if (ch.problems) showProblems(ch.problems.newValue || []); });
 
 // ---------- your inbox link ----------
 function showInboxMsg(text, kind) {

@@ -210,7 +210,14 @@
     const rec = { id: c.id, name: c.name, text, images: imgs.map((p) => p.dataset.name) };
     comp.innerHTML = ""; $("#previews").innerHTML = "";
     mock.sent.push(rec);
-    if (mock.flags.swallowSend) return; // message vanishes: outcome unknown
+    if (mock.flags.swallowSend) return; // message goes out but never shows on screen
+    if (mock.flags.sendFails) {         // Meta refuses the message
+      const d = document.createElement("div");
+      d.className = "b me"; d.textContent = "Couldn't send. Tap to try again.";
+      $("#msgs").appendChild(d);
+      mock.sent.pop();
+      return;
+    }
     setTimeout(() => {
       for (const p of imgs) c.msgs.push({ me: true, img: p.querySelector("img").src });
       if (text) c.msgs.push({ me: true, text });

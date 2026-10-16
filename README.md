@@ -7,7 +7,7 @@ are moved to **Done** automatically.
 There are two versions so you can compare them. Both use the same "brain"
 ([`extension/engine.js`](extension/engine.js)), so they make exactly the same decisions.
 
-| | **Option A: FollowUp Copilot** (Chrome extension) | **Option B: FollowUp Desk** (Windows app) |
+| | **Option A: FollowUp Copilot by Rojie Jardio** (Chrome extension) | **Option B: FollowUp Desk** (Windows app) |
 |---|---|---|
 | Looks like | A side panel next to your normal Business Suite tab | Its own window, plus a Chrome window it controls |
 | Install | Load one folder into Chrome (2 minutes) | Install Python once, then `install.bat` |
@@ -57,7 +57,7 @@ Safety rules built into both versions:
 2. In Chrome, open `chrome://extensions`.
 3. Turn on **Developer mode** (top right).
 4. Click **Load unpacked** and choose the **`extension`** folder.
-5. Pin the extension (puzzle icon → pin **FollowUp Copilot**).
+5. Pin the extension (puzzle icon → pin **FollowUp Copilot by Rojie Jardio**).
 6. Open Business Suite → **Inbox** and click the extension icon. The side panel opens and connects by itself.
 7. (Optional) Paste your inbox link from Chrome's address bar into **Your inbox link**. Then
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
@@ -140,6 +140,16 @@ If you install both versions, give them different keys so one key press doesn't 
 | Don't send if the image fails to attach | Skips that chat instead of sending text only |
 | Test mode | Does everything except pressing Send / Done |
 | Advanced | The exact words it looks for, in case Meta changes them or your Business Suite is in another language |
+
+### When something goes wrong: the Problems tab
+
+Every problem is listed in the **Problems** tab (in both versions) with **what happened**, **why**, and
+**how to fix it**. If 3 problems happen in a row, the run pauses and the message at the top says the same,
+with a button that opens the Problems tab. Fix the cause, then press **Resume**.
+
+After pressing Send, the app checks that the message appeared in the chat or in that chat's preview in the
+list ("You: …"). If it can't see it but the message box emptied and Meta showed no error, it still counts as
+**Sent**, with a note in the Activity list. That isn't a problem, so it doesn't pause.
 
 **New campaign** makes the app forget who it already messaged. Use it when you start a new follow-up message.
 

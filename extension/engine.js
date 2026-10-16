@@ -488,59 +488,128 @@
     return ok ? { ok: true } : { ok: false, why: "Clicked Done but the chat stayed in the list" };
   }
 
+  // Plain-language explanation for every kind of problem: what happened, why, and how to fix it.
+  const HELP = {
+    CLICK_FAILED: {
+      what: "The app couldn't click this chat in the list, so nothing was sent to this person.",
+      why: "The inbox list was redrawing (loading or scrolling) at that moment.",
+      fix: "Usually fixes itself on the next chat. If it repeats, press F5 on the Business Suite tab, then Resume.",
+    },
+    OPEN_TIMEOUT: {
+      what: "The chat didn't open in time (tried twice), so nothing was sent to this person.",
+      why: "Business Suite was slow to load the chat, or it shows this person's name differently in the chat than in the list.",
+      fix: "Settings → raise “Wait after opening a chat” to 2–3 seconds. If it's always the same person, message them yourself.",
+    },
+    CHAT_CHANGED: {
+      what: "Another chat opened while this one was loading, so nothing was sent.",
+      why: "A new message arrived or something was clicked in the inbox during loading.",
+      fix: "Nothing needed if it happens once. Avoid clicking in the Business Suite tab while it runs.",
+    },
+    NO_MESSAGE_BOX: {
+      what: "This chat had no message box, so nothing was sent.",
+      why: "The chat probably can't be messaged, but Meta showed a different warning than the one the app looks for (for example in another language).",
+      fix: "Open this chat and read the text where the message box should be. Add that sentence under Settings → Advanced → “Can't message” banner text, so these chats go to Done.",
+    },
+    TEXT_FAILED: {
+      what: "The message couldn't be typed into the box, so nothing was sent.",
+      why: "The message box wasn't ready yet, or Meta changed how it works.",
+      fix: "Press F5 on the Business Suite tab, then Resume. If it keeps happening, send Claude a screenshot of the chat.",
+    },
+    IMAGE_FAILED: {
+      what: "The image didn't attach, so nothing was sent (the text was removed from the box).",
+      why: "The image is too large or a format Messenger doesn't accept, or the upload was slow.",
+      fix: "Choose a JPG or PNG under 5 MB. Or untick “Don't send if the image fails to attach” to send text only when this happens.",
+    },
+    SEND_STUCK: {
+      what: "The message stayed in the box after pressing Send, so it was not sent. The box was cleared.",
+      why: "The Send button didn't respond, usually because of a slow connection.",
+      fix: "Check your internet, raise “Wait after opening a chat”, then Resume. This person will be tried again next run.",
+    },
+    META_NOT_SENT: {
+      what: "Meta showed “couldn't send” for this message.",
+      why: "Meta refused the message. This often means messages are going out too fast, or this person can't receive messages.",
+      fix: "Raise “Seconds between chats”. The app won't retry this person, so message them yourself later if you want.",
+    },
+    DONE_FAILED: {
+      what: "This chat should go to Done, but the ✔ (Move to done) button couldn't be clicked.",
+      why: "The button wasn't found, or the chat stayed in the list after clicking.",
+      fix: "Move this chat to Done yourself. If it happens on every chat, press Check page and look at the “Done (✔) button” line, then send Claude a screenshot.",
+    },
+    META_WARNING: {
+      what: "Meta showed a warning on the page, so the app paused.",
+      why: "Meta may be limiting or checking your account.",
+      fix: "Read the warning in the Business Suite tab. If it's about limits or blocking, stop for today and lower the Daily limit.",
+    },
+    ERROR: {
+      what: "Something unexpected went wrong on this chat, so nothing was sent.",
+      why: "The page changed in a way the app didn't expect.",
+      fix: "Press F5 on the Business Suite tab, then Resume. If it repeats, send Claude a screenshot and the details below.",
+    },
+  };
+
   async function processRow(ctx, row) {
     const { cfg, hooks, list } = ctx;
     const out = (status, reason, extra) => Object.assign({ time: new Date().toISOString(), name: row.name, id: null, status, reason: reason || "" }, extra || {});
+    // A problem entry: status (FAILED unless given), plus the code and its plain-language help.
+    const problem = (code, reason, extra) => {
+      const e = Object.assign({}, extra);
+      const status = e.status || "FAILED";
+      delete e.status;
+      return out(status, reason, Object.assign({ code, help: HELP[code] }, e));
+    };
     const excludedName = cfg.excludeNames.some((n) => low(n) === low(row.name));
 
     if (!excludedName && cfg.onlyIfLastFromMe && !row.fromMe) return out("SKIPPED", "Customer wrote last — reply to them yourself");
 
-    // Open the chat and make sure it really is this person
+    // Open the chat and make sure it really is this person. Slow chats get a second try.
     const prevId = threadId();
     const alreadyOpen = headerHasName(row.name, list);
-    // Long inboxes only draw the rows on screen and redraw them while scrolling,
-    // so bring the row into view first, then look it up again before clicking.
-    let clicked = false;
-    for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
-      if (row.el.isConnected && !onScreen(row.el)) {
-        row.el.scrollIntoView({ block: "center", inline: "nearest" });
-        await sleep(300);
+    let opened = false;
+    for (let tryOpen = 0; tryOpen < 2 && !opened; tryOpen++) {
+      // Long inboxes only draw the rows on screen and redraw them while scrolling,
+      // so bring the row into view first, then look it up again before clicking.
+      let clicked = false;
+      for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
+        if (row.el.isConnected && !onScreen(row.el)) {
+          row.el.scrollIntoView({ block: "center", inline: "nearest" });
+          await sleep(300);
+        }
+        const fresh = getRows(list, cfg).find((r) => r.key === row.key);
+        if (!fresh) return out("SKIPPED", "Chat left the list before it could be opened");
+        row = fresh;
+        try { await click(nameElementIn(row), hooks); clicked = true; }
+        catch (e) { if (e.message !== "STALE") throw e; await sleep(400); }
       }
-      const fresh = getRows(list, cfg).find((r) => r.key === row.key);
-      if (!fresh) return out("SKIPPED", "Chat left the list before it could be opened");
-      row = fresh;
-      try { await click(nameElementIn(row), hooks); clicked = true; }
-      catch (e) { if (e.message !== "STALE") throw e; }
+      if (!clicked) return problem("CLICK_FAILED", "Couldn't click this chat in the list — nothing sent", { status: "REVIEW" });
+      opened = await waitFor(() => headerHasName(row.name, list) && (alreadyOpen || threadId() === null || threadId() !== prevId), cfg.pageTimeoutMs);
     }
-    if (!clicked) return out("REVIEW", "Couldn't click this chat in the list — nothing sent");
-    const opened = await waitFor(() => headerHasName(row.name, list) && (alreadyOpen || threadId() === null || threadId() !== prevId), cfg.pageTimeoutMs);
-    if (!opened) return out("REVIEW", "Couldn't confirm the open chat is this person — nothing sent");
+    if (!opened) return problem("OPEN_TIMEOUT", "Couldn't confirm the open chat is this person — nothing sent", { status: "REVIEW" });
     await sleep(cfg.stepDelayMs);
-    if (!headerHasName(row.name, list)) return out("REVIEW", "Chat changed while loading — nothing sent");
+    if (!headerHasName(row.name, list)) return problem("CHAT_CHANGED", "Chat changed while loading — nothing sent", { status: "REVIEW" });
 
     const id = threadId() || row.key;
     if (await hooks.alreadyDone(id)) return out("SKIPPED", "Already handled in this campaign", { id });
 
     const warn = stopReason(cfg, list);
-    if (warn) return out("STOP", `Meta shows: "${warn}"`, { id });
+    if (warn) return out("STOP", `Meta shows: "${warn}"`, { id, code: "META_WARNING", help: HELP.META_WARNING });
 
     const blocked = excludedName ? `Name is "${row.name}"` : bodyHas(cfg.blockedTexts) ? "Can't message this person" : null;
     if (blocked) {
       if (cfg.testMode) return out("EXCLUDED", blocked + " (test mode: Done not clicked)", { id });
       const m = await moveToDone(ctx, row);
       await hooks.markDone(id);
-      return m.ok ? out("EXCLUDED", blocked + " → moved to Done", { id }) : out("FAILED", blocked + ", but " + m.why, { id, countsAsFailure: true });
+      return m.ok ? out("EXCLUDED", blocked + " → moved to Done", { id }) : problem("DONE_FAILED", blocked + ", but " + m.why, { id, countsAsFailure: true });
     }
 
     const composer = findComposer(list);
-    if (!composer) return out("FAILED", "Message box not found", { id });
+    if (!composer) return problem("NO_MESSAGE_BOX", "Message box not found — nothing sent", { id });
 
     await scrollChatToLatestFor(list, composer);
 
     const text = render(cfg.template, row.name, cfg);
     if (!(await putText(composer, text, hooks))) {
       await clearComposer(composer, hooks);
-      return out("FAILED", "Couldn't put the message in the box", { id });
+      return problem("TEXT_FAILED", "Couldn't put the message in the box — nothing sent", { id });
     }
     let how = "";
     if (cfg.image && (cfg.image.dataUrl || cfg.image.native)) {
@@ -548,7 +617,7 @@
       if (!how && cfg.imageRequired) {
         await clearComposer(composer, hooks);
         await removePreviews(composer, cfg, hooks);
-        return out("FAILED", "Image didn't attach — nothing sent", { id });
+        return problem("IMAGE_FAILED", "Image didn't attach — nothing sent", { id });
       }
     }
 
@@ -559,42 +628,52 @@
       return out("TEST", "Ready to send (test mode): " + text.slice(0, 60), { id });
     }
 
-    // Send and confirm the message shows up in the chat
-    const msgList = findMessageList(list, composer);
+    // Send, then confirm. Two independent signs that it went out:
+    //  1. the message text appears on the page (outside the message box), or
+    //  2. this chat's preview in the inbox list changes to "You: <your message>".
     const snip = sig(text).slice(0, 40);
-    const shown = () => countOf(messagesSig(msgList, composer), snip);
+    const short = sig(text).slice(0, 12);
+    const pageSig = () => {
+      let t = sig(document.body.innerText);
+      const c = sig(composerText(composer));
+      if (c) t = t.replace(c, "");
+      return t;
+    };
+    const shown = () => countOf(pageSig(), snip);
+    const previewIsMine = () => {
+      const r = getRows(list, cfg).find((x) => x.name === row.name);
+      return !!r && r.lines.some((l) => cfg.youPrefixes.some((p) => l.startsWith(p)) && sig(l.slice(l.indexOf(":") + 1)).startsWith(short));
+    };
     const failCount = () => cfg.sendFailTexts.reduce((n, t) => n + countOf(low(document.body.innerText), low(t)), 0);
-    const before = shown(), failBefore = failCount();
+    const before = shown(), previewBefore = previewIsMine(), failBefore = failCount();
+    const confirmed = () => shown() > before || (!previewBefore && previewIsMine());
 
     const btn = findLabeled(cfg.sendLabels, nearComposer(composer, 120))[0];
     if (btn) await click(btn, hooks); else await pressEnter(composer, hooks);
-    let ok = await waitFor(() => shown() > before, 3000);
+    let ok = await waitFor(confirmed, 3000);
     if (!ok && composerHasExactlyOnce(composer, text)) {
       await pressEnter(composer, hooks); // the text is still in the box, so this can't double-send
     }
-    ok = ok || (await waitFor(() => shown() > before, cfg.pageTimeoutMs));
+    ok = ok || (await waitFor(() => confirmed() || !sig(composerText(composer)), cfg.pageTimeoutMs));
     await sleep(800);
+    ok = ok && confirmed();
     if (failCount() > failBefore) {
       await hooks.markDone(id);
-      return out("UNKNOWN", "Meta says the message wasn't sent — not retried", { id, countsAsFailure: true });
+      return problem("META_NOT_SENT", "Meta says the message wasn't sent — not retried", { id, status: "UNKNOWN", countsAsFailure: true });
     }
-    if (ok) {
-      await hooks.markDone(id);
-      await hooks.onSent();
-      let note = how ? `with image (${how})` : "text only";
-      if (cfg.moveSentToDone) {
-        const m = await moveToDone(ctx, row);
-        note += m.ok ? ", moved to Done" : ", " + m.why;
-      }
-      return out("SENT", note, { id, text });
-    }
-    if (composerHasExactlyOnce(composer, text)) {
+    if (composerHasExactlyOnce(composer, text) && !ok) {
       await clearComposer(composer, hooks);
-      return out("FAILED", "Send didn't go through (text stayed in the box)", { id });
+      return problem("SEND_STUCK", "Send didn't go through (text stayed in the box)", { id });
     }
-    await hooks.markDone(id); // never retry an unknown outcome
+    // Sent: either confirmed on screen, or the box emptied with no error from Meta.
+    await hooks.markDone(id);
     await hooks.onSent();
-    return out("UNKNOWN", "Message left the box but didn't appear in the chat — not retried", { id, countsAsFailure: true });
+    let note = (how ? `with image (${how})` : "text only") + (ok ? "" : " · couldn't double-check it on screen, but the box emptied with no error");
+    if (cfg.moveSentToDone) {
+      const m = await moveToDone(ctx, row);
+      note += m.ok ? ", moved to Done" : ", " + m.why;
+    }
+    return out("SENT", note, { id, text, confirmed: ok });
   }
 
   async function scrollChatToLatestFor(list, composer) {
@@ -671,8 +750,8 @@
 
           let res;
           try { res = await processRow({ cfg, hooks, list }, row); }
-          catch (e) { res = { time: new Date().toISOString(), name: row.name, status: "FAILED", reason: "Error: " + (e && e.message ? e.message : e) }; }
-          if (res.status === "STOP") { await hooks.log(Object.assign(res, { status: "REVIEW" })); this.pause(res.reason + ". Check the page, then Resume or Stop."); continue; }
+          catch (e) { res = { time: new Date().toISOString(), name: row.name, status: "FAILED", reason: "Error: " + (e && e.message ? e.message : e), code: "ERROR", help: HELP.ERROR }; }
+          if (res.status === "STOP") { await hooks.log(Object.assign(res, { status: "REVIEW" })); this.pause(res.reason + ". " + HELP.META_WARNING.fix); continue; }
           await hooks.log(res);
           // A chat moved to Done has left the list; another row with the same name
           // and default photo (e.g. a second "Facebook user") is a different person.
@@ -683,7 +762,8 @@
           failures = bad ? failures + 1 : res.status === "SENT" ? 0 : failures;
           if (failures >= cfg.maxConsecutiveFailures) {
             failures = 0;
-            this.pause(`${cfg.maxConsecutiveFailures} problems in a row (last: ${res.reason}). Check the page, then Resume.`);
+            const h = res.help || HELP.ERROR;
+            this.pause(`Paused after ${cfg.maxConsecutiveFailures} problems in a row. Last one (${res.name}): ${h.what} How to fix: ${h.fix} See the Problems tab for details, then press Resume.`);
             continue;
           }
           if (res.status === "SENT" || res.status === "UNKNOWN" || res.status === "TEST") await this.wait(cfg.betweenChatsSec * 1000);
@@ -869,6 +949,7 @@
   const api = {
     VERSION,
     DEFAULTS,
+    HELP,
     firstName,
     render,
     current: null,

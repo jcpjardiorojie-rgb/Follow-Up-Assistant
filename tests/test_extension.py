@@ -183,3 +183,30 @@ def test_inbox_link_opens_my_page_and_blocks_other_pages(ext):
     panel.click("#start")
     panel.wait_for_selector("#pill.finished", timeout=60_000)
     assert mine_tab.evaluate("__mock.sent.length") == 1 and inbox.evaluate("__mock.sent.length") == 0
+
+
+def test_problems_tab_explains_what_happened_and_how_to_fix(ext):
+    inbox, panel, _ = ext
+    assert "by Rojie Jardio" in panel.inner_text("h1")
+    assert panel.inner_text("#probCount") == "" or panel.is_hidden("#probCount")
+    inbox.evaluate("__mock.flags.sendFails = true")
+    panel.fill("#tplText", "Hi {first_name}!")
+    panel.click("#settingsBox summary")
+    panel.fill("#sBetween", "0")
+    panel.dispatch_event("#sBetween", "change")
+    panel.fill("#sStep", "0.3")
+    panel.dispatch_event("#sStep", "change")
+    panel.click("#start")
+    panel.wait_for_selector("#pill.paused", timeout=120_000)
+    assert "How to fix:" in panel.inner_text("#reason")
+    assert panel.is_visible("#seeProblems") and panel.inner_text("#probCount") == "3"
+    panel.click("#seeProblems")
+    panel.wait_for_selector("#problemsView:not([hidden])")
+    items = panel.locator("#problems li")
+    assert items.count() == 3
+    text = items.first.inner_text().lower()
+    assert "what happened:" in text and "why:" in text and "how to fix:" in text and "seconds between chats" in text
+    panel.screenshot(path=str(SHOTS / "option-a-problems-tab.png"), clip={"x": 0, "y": 0, "width": 380, "height": 560})
+    panel.click("#tabMain")
+    panel.wait_for_selector("#mainView:not([hidden])")
+    panel.click("#stop")

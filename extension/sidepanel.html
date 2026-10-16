@@ -3,17 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FollowUp Copilot</title>
+<title>FollowUp Copilot by Rojie Jardio</title>
 <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
 <header class="top">
   <div>
-    <h1>FollowUp Copilot</h1>
+    <h1>FollowUp Copilot <span class="by">by Rojie Jardio</span></h1>
     <div id="where" class="sub">Looking for your Business Suite tab…</div>
   </div>
   <span id="pill" class="pill idle">Ready</span>
 </header>
+
+<nav class="tabs" role="tablist">
+  <button id="tabMain" class="tab on" role="tab" aria-selected="true">Main</button>
+  <button id="tabProblems" class="tab" role="tab" aria-selected="false">Problems <span id="probCount" class="count" hidden>0</span></button>
+</nav>
+
+<div id="problemsView" hidden>
+  <section class="card">
+    <div class="loghead"><h2>Problems</h2><button id="pClear" class="small">Clear</button></div>
+    <p class="hint">Each problem says what happened, why, and how to fix it. Nothing was sent to these people
+      unless it says so. Newest first.</p>
+    <ol id="problems" class="problems"></ol>
+  </section>
+</div>
+
+<div id="mainView">
 
 <section class="card">
   <label for="inboxUrl" class="hint">Your inbox link (optional): paste it from Chrome's address bar</label>
@@ -26,6 +42,7 @@
 
 <section class="card run">
   <div id="reason" class="reason">Press Start when your Inbox is open.</div>
+  <button id="seeProblems" class="small" hidden>See what went wrong and how to fix it →</button>
   <div id="current" class="current"></div>
   <div class="controls">
     <button id="start" class="primary">Start</button>
@@ -106,6 +123,8 @@
   <div class="campaign"><span id="remembered">0 chats remembered in this campaign</span><button id="newCampaign" class="small">New campaign</button></div>
   <p class="hint">A campaign remembers every chat it already messaged, so restarting never double-sends. Start a new campaign when you send a new follow-up.</p>
 </section>
+
+</div>
 
 <div id="confirm" class="confirm" hidden>
   <p id="confirmText"></p>

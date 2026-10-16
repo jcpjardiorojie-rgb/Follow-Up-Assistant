@@ -135,8 +135,12 @@ class App:
         msg_tab, set_tab = ttk.Frame(tabs, style="Card.TFrame"), ttk.Frame(tabs, style="Card.TFrame")
         tabs.add(msg_tab, text="  Message  ")
         tabs.add(set_tab, text="  Settings  ")
+        prob_tab = ttk.Frame(tabs, style="Card.TFrame")
+        tabs.add(prob_tab, text="  Problems  ")
+        self.tabs, self.prob_tab = tabs, prob_tab
         self._build_message(msg_tab)
         self._build_settings(set_tab)
+        self._build_problems(prob_tab)
         self._build_activity(rcol)
 
     def _build_message(self, parent):
@@ -226,6 +230,48 @@ class App:
             self.v_keys[action] = var
             ttk.Entry(k, textvariable=var, width=16).grid(row=i, column=0, sticky="w", pady=2)
             ttk.Label(k, text=label, style="Card.TLabel").grid(row=i, column=1, sticky="w", padx=8)
+
+    def _build_problems(self, parent):
+        card = self._card(parent, "Problems", "what happened, why, and how to fix it")
+        card.pack(fill="both", expand=True)
+        frame = ttk.Frame(card, style="Card.TFrame")
+        frame.pack(fill="both", expand=True)
+        self.prob_text = tk.Text(frame, wrap="word", font=(FONT, 10), relief="flat", bg=C["surface"], padx=4, pady=4,
+                                 highlightthickness=0, cursor="arrow")
+        sb = ttk.Scrollbar(frame, orient="vertical", command=self.prob_text.yview)
+        self.prob_text.configure(yscrollcommand=sb.set)
+        self.prob_text.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        self.prob_text.tag_configure("name", font=(FONT, 11, "bold"), spacing1=10)
+        self.prob_text.tag_configure("when", foreground=C["muted"], font=(FONT, 9))
+        self.prob_text.tag_configure("label", foreground=C["muted"], font=(FONT, 9, "bold"))
+        self.prob_text.tag_configure("fix", background=C["good_soft"], foreground=C["good"], lmargin1=4, lmargin2=4)
+        row = ttk.Frame(card, style="Card.TFrame")
+        row.pack(fill="x", pady=(6, 0))
+        ttk.Button(row, text="Clear problems", command=self._clear_problems).pack(side="right")
+        self._show_problems()
+
+    def _show_problems(self):
+        items = self.store.problems()
+        t = self.prob_text
+        t.config(state="normal")
+        t.delete("1.0", "end")
+        if not items:
+            t.insert("end", "No problems. When something goes wrong, it shows up here with how to fix it.", "when")
+        for p in reversed(items[-100:]):
+            h = p.get("help") or {}
+            t.insert("end", (p.get("name") or "") + "\n", "name")
+            t.insert("end", (p.get("time") or "").replace("T", " ")[:19] + "\n", "when")
+            t.insert("end", "WHAT HAPPENED  ", "label"); t.insert("end", h.get("what", p.get("reason", "")) + "\n")
+            t.insert("end", "WHY  ", "label"); t.insert("end", h.get("why", "") + "\n")
+            t.insert("end", "HOW TO FIX  " + h.get("fix", "") + "\n", "fix")
+        t.config(state="disabled")
+        self.tabs.tab(self.prob_tab, text=f"  Problems ({len(items)})  " if items else "  Problems  ")
+
+    def _clear_problems(self):
+        if messagebox.askyesno("Clear problems", "Clear the Problems list?"):
+            self.store.clear_problems()
+            self._show_problems()
 
     def _build_activity(self, parent):
         counts = ttk.Frame(parent)
@@ -515,6 +561,8 @@ class App:
                     self._set_state(data)
                 elif kind == "log":
                     self._add_log(data)
+                elif kind == "problem":
+                    self._show_problems()
                 elif kind == "stats":
                     self._show_stats(data)
                 elif kind == "scroll":
@@ -539,6 +587,8 @@ class App:
 
     def _set_state(self, st):
         s = st.get("state", "idle")
+        if s == "paused" and "Problems tab" in (st.get("reason") or ""):
+            self.tabs.select(self.prob_tab)
         if s in STATE_LOOK:
             self.state = s if s not in ("error", "ready") else "idle"
             text, bg, fg = STATE_LOOK[s]

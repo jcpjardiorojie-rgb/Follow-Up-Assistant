@@ -145,6 +145,16 @@ class Store:
                 w.writerow(["time", "name", "status", "reason"])
             w.writerow([entry.get("time", ""), entry.get("name", ""), entry.get("status", ""), entry.get("reason", "")])
 
+    def problems(self):
+        return self._read("problems.json", [])
+
+    def add_problem(self, entry):
+        items = self.problems() + [{k: entry.get(k) for k in ("time", "name", "status", "reason", "code", "help")}]
+        self._write("problems.json", items[-300:])
+
+    def clear_problems(self):
+        self._write("problems.json", [])
+
     def recent_log(self, n=300):
         try:
             with self.log_path.open(newline="", encoding="utf-8-sig") as f:
@@ -344,6 +354,9 @@ class Controller:
     async def _hook(self, name, payload=None):
         if name == "log":
             self.store.add_log(payload)
+            if payload.get("help"):
+                self.store.add_problem(payload)
+                self._emit("problem", payload)
             key = COUNTER.get(payload.get("status"))
             if key and key != "sent":
                 self.store.bump(key)

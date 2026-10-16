@@ -13,7 +13,7 @@
   let lastState = { state: "idle", reason: "" };
 
   async function load() {
-    const d = await chrome.storage.local.get(["settings", "template", "campaign", "stats", "log"]);
+    const d = await chrome.storage.local.get(["settings", "template", "campaign", "stats", "log", "problems"]);
     const stats = d.stats && d.stats.date === today() ? d.stats : freshStats();
     return {
       settings: Object.assign({}, E.DEFAULTS, d.settings || {}),
@@ -21,6 +21,7 @@
       campaign: d.campaign || { id: Date.now(), doneIds: [] },
       stats,
       log: d.log || [],
+      problems: d.problems || [],
     };
   }
   function save(now) {
@@ -28,7 +29,8 @@
     const write = () => {
       if (!data) return;
       if (data.log.length > LOG_MAX) data.log = data.log.slice(-LOG_MAX);
-      chrome.storage.local.set({ campaign: data.campaign, stats: data.stats, log: data.log });
+      if (data.problems.length > 300) data.problems = data.problems.slice(-300);
+      chrome.storage.local.set({ campaign: data.campaign, stats: data.stats, log: data.log, problems: data.problems });
     };
     if (now) write(); else saveTimer = setTimeout(write, 400);
   }
@@ -48,6 +50,7 @@
         const k = COUNTER[e.status];
         if (k && k !== "sent") data.stats[k]++;
         data.log.push({ time: e.time, name: e.name, status: e.status, reason: e.reason });
+        if (e.help) data.problems.push({ time: e.time, name: e.name, status: e.status, reason: e.reason, code: e.code, help: e.help });
         save();
         tell({ entry: e, stats: data.stats });
       },

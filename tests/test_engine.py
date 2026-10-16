@@ -71,6 +71,7 @@ def test_full_campaign_text_and_image(page):
     assert len(m["sent"]) == 14
     statuses = [e["status"] for e in res["log"]]
     assert statuses.count("SENT") == 14 and "FAILED" not in statuses and "UNKNOWN" not in statuses
+    assert all(e["confirmed"] for e in res["log"] if e["status"] == "SENT")  # seen on screen every time
 
 
 def test_text_only_when_editor_ignores_paste(page):
@@ -106,17 +107,34 @@ def test_unclear_identity_is_never_sent(page):
     res = run(page, dailyCap=2)
     m = mock(page)
     assert "Gabriella B Iramo" not in [s["name"] for s in m["sent"]]
-    assert any(e["name"] == "Gabriella B Iramo" and e["status"] == "REVIEW" for e in res["log"])
+    entry = next(e for e in res["log"] if e["name"] == "Gabriella B Iramo")
+    assert entry["status"] == "REVIEW" and entry["code"] == "OPEN_TIMEOUT"
+    assert "Wait after opening a chat" in entry["help"]["fix"]
 
 
-def test_unknown_outcome_is_not_retried(page):
+def test_sent_but_not_seen_on_screen_counts_as_sent_without_pausing(page):
+    # Your report: the messages went out, but the app couldn't see them in the chat and paused.
     page.evaluate("__mock.flags.swallowSend = true")
-    res = run(page, maxConsecutiveFailures=2, maxWaitMs=45000)
+    res = run(page, dailyCap=4, maxWaitMs=120000)
     m = mock(page)
     ids = [s["id"] for s in m["sent"]]
-    assert len(ids) == len(set(ids)) == 2
-    assert [e["status"] for e in res["log"] if e["status"] in ("SENT", "UNKNOWN")] == ["UNKNOWN", "UNKNOWN"]
+    assert len(ids) == len(set(ids)) == 4
+    sent = [e for e in res["log"] if e["status"] == "SENT"]
+    assert len(sent) == 4 and not any(e["confirmed"] for e in sent)
+    assert all("couldn't double-check" in e["reason"] for e in sent)
+    assert res["state"] == "finished" and "Daily limit" in res["states"][-1]["reason"]
+    assert not [e for e in res["log"] if e["status"] in ("FAILED", "REVIEW", "UNKNOWN")]
+
+
+def test_meta_refusing_messages_pauses_with_a_clear_fix(page):
+    page.evaluate("__mock.flags.sendFails = true")
+    res = run(page, maxWaitMs=120000)
+    problems = [e for e in res["log"] if e.get("code") == "META_NOT_SENT"]
+    assert len(problems) == 3 and len({e["id"] for e in problems}) == 3  # never retried
+    assert all(e["help"]["fix"].startswith("Raise “Seconds between chats”") for e in problems)
     assert res["state"] == "paused"
+    reason = [s for s in res["states"] if s["state"] == "paused"][-1]["reason"]
+    assert "3 problems in a row" in reason and "How to fix:" in reason and "Problems tab" in reason
 
 
 def test_meta_warning_pauses_the_run(page):
