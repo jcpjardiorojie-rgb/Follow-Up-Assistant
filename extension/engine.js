@@ -1,0 +1,759 @@
+/*
+ * FollowUp engine — the shared "brain" used by both versions.
+ *
+ *   Option A (Chrome extension) runs it with in-page events.
+ *   Option B (desktop app) runs the same file, but clicks, typing and file
+ *   uploads come from real browser input through Playwright ("native" hooks).
+ *
+ * It reads the Business Suite page by its visible text and layout, so it does
+ * not depend on Meta's internal class names. Every selector-like assumption
+ * lives in DEFAULTS so it can be changed from Settings without code changes.
+ */
+(function (root) {
+  "use strict";
+  if (root.FollowUpEngine) return;
+
+  const VERSION = "1.0.0";
+
+  const DEFAULTS = {
+    // Message
+    template: "Hi {first_name}! Just following up po 😊",
+    image: null, // { dataUrl, name } (A) — B attaches the file natively
+    fallbackName: "there",
+
+    // What to look for on the page
+    blockedTexts: ["You are no longer able to send messages to this person"],
+    excludeNames: ["Facebook user"],
+    stopTexts: [
+      "temporarily blocked",
+      "temporarily restricted",
+      "You can't use this feature right now",
+      "We limit how often",
+      "Your account has been restricted",
+      "account is restricted",
+      "Confirm your identity",
+      "Security check",
+      "Action blocked",
+    ],
+    sendFailTexts: ["couldn't send", "could not send", "failed to send", "message wasn't sent", "not delivered"],
+    doneLabels: ["move to done", "mark as done", "done"],
+    sendLabels: ["send", "press enter to send", "send message"],
+    attachLabels: ["attach a file", "attach file", "attach", "add photo", "add photos", "photo/video", "attach media", "add file"],
+    removeLabels: ["remove", "remove attachment", "remove file", "delete attachment"],
+    ignoreRowTexts: ["Connect to Instagram"],
+    listSelector: "", // optional CSS override for the inbox list
+    youPrefixes: ["You:", "You sent", "You replied", "You unsent"],
+
+    // Behaviour
+    order: "top", // "top" (newest first) or "bottom" (oldest loaded first)
+    onlyIfLastFromMe: true, // skip chats where the customer wrote last
+    moveSentToDone: false,
+    testMode: false, // prepare everything but never press Send / Done
+    stepDelayMs: 1200,
+    betweenChatsSec: 8,
+    dailyCap: 300,
+    pageTimeoutMs: 15000,
+    maxConsecutiveFailures: 3,
+    imageRequired: true,
+  };
+
+  // ---------- small helpers ----------
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const norm = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+  const low = (s) => norm(s).toLowerCase();
+  // Letters and digits only: ignores emoji (often rendered as images), spacing and punctuation.
+  const sig = (s) => String(s == null ? "" : s).normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+  const countOf = (hay, needle) => {
+    if (!needle) return 0;
+    let n = 0, i = hay.indexOf(needle);
+    while (i !== -1) { n++; i = hay.indexOf(needle, i + needle.length); }
+    return n;
+  };
+  const TIME_RE = /^(\d{1,2}:\d{2}\s?(am|pm)?|mon|tue|wed|thu|fri|sat|sun|yesterday|now|just now|\d+\s?(s|m|h|d|w|y|min|mins|hr|hrs)|[a-z]{3,9}\.? \d{1,2}(, \d{4})?|\d{1,2}\/\d{1,2}(\/\d{2,4})?)$/i;
+
+  function rect(el) { return el.getBoundingClientRect(); }
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    const r = rect(el);
+    if (r.width < 2 || r.height < 2) return false;
+    const cs = getComputedStyle(el);
+    return cs.visibility !== "hidden" && cs.display !== "none";
+  }
+  async function waitFor(fn, timeoutMs, everyMs = 200) {
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      let v = false;
+      try { v = fn(); } catch (_) { v = false; }
+      if (v) return v;
+      if (Date.now() > end) return false;
+      await sleep(everyMs);
+    }
+  }
+
+  // ---------- names & template ----------
+  function firstName(name, cfg) {
+    cfg = cfg || DEFAULTS;
+    const n = norm(name);
+    if (!n || (cfg.excludeNames || []).some((x) => low(x) === low(n))) return cfg.fallbackName;
+    for (const tok of n.split(" ")) {
+      let w = tok.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, "");
+      if (w.length < 2) continue;
+      if (w === w.toUpperCase() || w === w.toLowerCase()) w = w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+      return w;
+    }
+    return cfg.fallbackName;
+  }
+  function render(template, name, cfg) {
+    return String(template || "")
+      .replace(/\{\s*first[_ ]?name\s*\}/gi, firstName(name, cfg))
+      .replace(/\{\s*(full[_ ]?)?name\s*\}/gi, norm(name));
+  }
+
+  // ---------- reading the page ----------
+  function labelOf(el) {
+    return low(el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("data-tooltip-content") || "");
+  }
+  function labelMatches(label, wanted) {
+    return wanted.some((w) => { w = low(w); return label === w || (w.length > 4 && label.startsWith(w)); });
+  }
+  function findLabeled(wanted, filter) {
+    const out = [];
+    for (const el of document.querySelectorAll("[aria-label],[title],[data-tooltip-content]")) {
+      if (!labelMatches(labelOf(el), wanted)) continue;
+      const target = el.closest("button,[role=button],a") || el;
+      if (!isVisible(target)) continue;
+      if (filter && !filter(target)) continue;
+      out.push(target);
+    }
+    return out;
+  }
+
+  function isScrollable(el) {
+    if (el.scrollHeight <= el.clientHeight + 10) return false;
+    const oy = getComputedStyle(el).overflowY;
+    return oy === "auto" || oy === "scroll" || oy === "overlay";
+  }
+
+  // The group of siblings that repeat like inbox rows (same width, row-like height).
+  function rowGroup(container) {
+    const cw = rect(container).width;
+    let best = null, bestRows = [];
+    const queue = [[container, 0]];
+    while (queue.length) {
+      const [el, depth] = queue.shift();
+      const rows = [];
+      for (const ch of el.children) {
+        const r = rect(ch);
+        if (r.height >= 36 && r.height <= 140 && r.width >= cw * 0.6) rows.push(ch);
+      }
+      if (rows.length > bestRows.length) { best = el; bestRows = rows; }
+      if (depth < 10) for (const ch of el.children) queue.push([ch, depth + 1]);
+    }
+    return bestRows.length >= 2 ? bestRows : [];
+  }
+
+  function findList(cfg) {
+    if (cfg.listSelector) {
+      const el = document.querySelector(cfg.listSelector);
+      if (el) return el;
+    }
+    const W = window.innerWidth;
+    let best = null, bestCount = 0;
+    for (const el of document.querySelectorAll("div,ul,ol,section")) {
+      if (!isScrollable(el)) continue;
+      const r = rect(el);
+      if (r.height < 200 || r.width < 150 || r.left > W * 0.45 || r.width > W * 0.55) continue;
+      const n = rowGroup(el).length;
+      if (n > bestCount) { best = el; bestCount = n; }
+    }
+    return best;
+  }
+
+  function textLines(el) {
+    return String(el.innerText || "").split("\n").map(norm).filter(Boolean);
+  }
+  function rowInfo(el, cfg) {
+    const lines = textLines(el);
+    const nameLine = lines.find((l) => !TIME_RE.test(l)) || "";
+    const fromMe = lines.some((l) => cfg.youPrefixes.some((p) => l.startsWith(p)));
+    const img = el.querySelector("img,image");
+    const src = img ? (img.getAttribute("src") || img.getAttribute("xlink:href") || img.getAttribute("href") || "").split("?")[0] : "";
+    return { el, name: nameLine, fromMe, lines, key: nameLine + "|" + src.slice(-48) };
+  }
+  function getRows(list, cfg) {
+    return rowGroup(list)
+      .map((el) => rowInfo(el, cfg))
+      .filter((r) => r.name && r.lines.length >= 1 && !cfg.ignoreRowTexts.some((t) => r.lines.join(" ").includes(t)));
+  }
+  function nameElementIn(row) {
+    const walker = document.createTreeWalker(row.el, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (norm(n.nodeValue) === row.name && n.parentElement && isVisible(n.parentElement)) return n.parentElement;
+    }
+    return row.el;
+  }
+
+  function threadId() {
+    try { return new URL(location.href).searchParams.get("selected_item_id"); } catch (_) { return null; }
+  }
+
+  // Is this exact name shown in the open conversation (header area, right of the list)?
+  function headerHasName(name, list) {
+    const lr = rect(list);
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (norm(n.nodeValue) !== name) continue;
+      const p = n.parentElement;
+      if (!p || list.contains(p) || !isVisible(p)) continue;
+      const r = rect(p);
+      if (r.left >= lr.right - 5 && r.top < window.innerHeight * 0.4) return true;
+    }
+    return false;
+  }
+
+  function findComposer(list) {
+    const lr = rect(list);
+    const W = window.innerWidth;
+    let best = null;
+    for (const el of document.querySelectorAll("[contenteditable=true],[contenteditable=''],textarea")) {
+      if (!isVisible(el) || list.contains(el)) continue;
+      const r = rect(el);
+      if (r.left < lr.right - 5 || r.left > W * 0.85) continue;
+      if (!best || r.bottom > rect(best).bottom) best = el;
+    }
+    return best;
+  }
+  function composerText(c) { return c ? (c.value !== undefined && c.tagName === "TEXTAREA" ? c.value : c.innerText) : ""; }
+
+  function findMessageList(list, composer) {
+    const lr = rect(list);
+    const cr = composer ? rect(composer) : null;
+    let best = null, bestH = 0;
+    for (const el of document.querySelectorAll("div,section,main")) {
+      if (!isScrollable(el) || list.contains(el) || el.contains(list)) continue;
+      const r = rect(el);
+      if (r.left < lr.right - 5 || r.height < 120) continue;
+      if (cr && (r.right < cr.left || r.left > cr.right || r.top > cr.top)) continue;
+      if (r.height > bestH) { best = el; bestH = r.height; }
+    }
+    if (best || !composer) return best;
+    // Short chats have no scrollbar: use the chat column that holds the message box.
+    for (let el = composer.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (el.contains(list)) break;
+      if (rect(el).height >= 300) return el;
+    }
+    return null;
+  }
+  function messagesSig(msgList, composer) {
+    if (!msgList) return "";
+    let s = sig(msgList.innerText);
+    if (composer && msgList.contains(composer)) s = s.replace(sig(composerText(composer)), "");
+    return s;
+  }
+
+  function bodyHas(texts) {
+    const t = low(document.body.innerText);
+    return texts.find((x) => t.includes(low(x))) || null;
+  }
+  // Warnings from Meta. Text inside the open chat history is ignored, so a customer
+  // writing "security check" does not pause the run.
+  function stopReason(cfg, list) {
+    const body = low(document.body.innerText);
+    const composer = list ? findComposer(list) : null;
+    const msgs = list ? findMessageList(list, composer) : null;
+    const inChat = msgs ? low(msgs.innerText) : "";
+    for (const s of cfg.stopTexts) {
+      const k = low(s);
+      if (countOf(body, k) > countOf(inChat, k)) return s;
+    }
+    return null;
+  }
+
+  // Images that look like attachment previews near the message box.
+  function previewSet(composer) {
+    const cr = rect(composer);
+    const out = new Set();
+    for (const el of document.querySelectorAll("img,video,canvas,[style*='background-image']")) {
+      if (!isVisible(el)) continue;
+      const r = rect(el);
+      if (r.width < 24 || r.height < 24) continue;
+      if (r.bottom < cr.top - 240 || r.top > cr.bottom + 60 || r.right < cr.left - 60 || r.left > cr.right + 60) continue;
+      out.add(el);
+    }
+    return out;
+  }
+  function hasNewPreview(composer, before) {
+    for (const el of previewSet(composer)) if (!before.has(el)) return true;
+    return false;
+  }
+
+  function findFileInput(composer) {
+    let el = composer;
+    for (let i = 0; i < 10 && el; i++, el = el.parentElement) {
+      const inp = el.querySelector("input[type=file]");
+      if (inp) return inp;
+    }
+    return document.querySelector("input[type=file][accept*=image]") || document.querySelector("input[type=file]");
+  }
+  function nearComposer(composer, maxDy) {
+    const cr = rect(composer);
+    return (el) => {
+      const r = rect(el);
+      return Math.abs((r.top + r.bottom) / 2 - (cr.top + cr.bottom) / 2) < maxDy && r.left > cr.left - 200;
+    };
+  }
+
+  // ---------- acting on the page ----------
+  function center(el) {
+    const r = rect(el);
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  }
+  function fireMouse(target, x, y) {
+    const o = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0 };
+    const P = window.PointerEvent || MouseEvent;
+    target.dispatchEvent(new P("pointerover", { ...o, pointerType: "mouse" }));
+    target.dispatchEvent(new MouseEvent("mouseover", o));
+    target.dispatchEvent(new P("pointerdown", { ...o, pointerType: "mouse" }));
+    target.dispatchEvent(new MouseEvent("mousedown", o));
+    if (target.focus) try { target.focus({ preventScroll: true }); } catch (_) {}
+    target.dispatchEvent(new P("pointerup", { ...o, pointerType: "mouse" }));
+    target.dispatchEvent(new MouseEvent("mouseup", o));
+    target.dispatchEvent(new MouseEvent("click", o));
+  }
+  async function click(el, hooks) {
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+    await sleep(120);
+    const { x, y } = center(el);
+    if (hooks.native && hooks.native.click) return hooks.native.click(x, y);
+    const target = document.elementFromPoint(x, y);
+    fireMouse(target && el.contains(target) ? target : el, x, y);
+  }
+  async function hover(el, hooks) {
+    const { x, y } = center(el);
+    if (hooks.native && hooks.native.hover) return hooks.native.hover(x, y);
+    const o = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+    for (const t of ["pointerover", "pointerenter", "mouseover", "mouseenter", "mousemove"]) {
+      const C = t.startsWith("pointer") && window.PointerEvent ? PointerEvent : MouseEvent;
+      el.dispatchEvent(new C(t, { ...o, bubbles: !t.endsWith("enter") }));
+    }
+  }
+  function selectAllIn(el) {
+    el.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  async function clearComposer(composer, hooks) {
+    if (!composer || !composer.isConnected) return;
+    if (!sig(composerText(composer))) return;
+    if (composer.tagName === "TEXTAREA") { setNativeValue(composer, ""); return; }
+    if (hooks.native && hooks.native.key) {
+      await click(composer, hooks);
+      await hooks.native.key("Control+A");
+      await hooks.native.key("Backspace");
+    } else {
+      selectAllIn(composer);
+      document.execCommand("delete");
+    }
+    await sleep(150);
+  }
+  function setNativeValue(el, value) {
+    const proto = Object.getPrototypeOf(el);
+    const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  function composerHasExactlyOnce(composer, text) {
+    const snip = sig(text).slice(0, 40);
+    return countOf(sig(composerText(composer)), snip) === 1;
+  }
+
+  async function putText(composer, text, hooks) {
+    await clearComposer(composer, hooks);
+    if (composer.tagName === "TEXTAREA") {
+      setNativeValue(composer, text);
+    } else if (hooks.native && hooks.native.typeText) {
+      await click(composer, hooks);
+      await hooks.native.typeText(text);
+    } else {
+      // 1) paste, which Meta's editor handles itself; 2) typing commands as a fallback
+      composer.focus();
+      const dt = new DataTransfer();
+      dt.setData("text/plain", text);
+      composer.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      await sleep(300);
+      if (!composerHasExactlyOnce(composer, text)) {
+        await clearComposer(composer, hooks);
+        selectAllIn(composer);
+        text.split("\n").forEach((line, i) => {
+          if (i) document.execCommand("insertLineBreak");
+          if (line) document.execCommand("insertText", false, line);
+        });
+      }
+    }
+    return waitFor(() => composerHasExactlyOnce(composer, text), 3000);
+  }
+
+  function dataUrlToFile(dataUrl, name) {
+    const [head, b64] = dataUrl.split(",");
+    const mime = (head.match(/data:([^;]+)/) || [])[1] || "image/jpeg";
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], name || "image.jpg", { type: mime });
+  }
+
+  async function attachImage(composer, cfg, hooks, log) {
+    const before = previewSet(composer);
+    const seen = () => hasNewPreview(composer, before);
+    if (hooks.native && hooks.native.attach) {
+      document.querySelectorAll("[data-fu-file],[data-fu-attach]").forEach((e) => { e.removeAttribute("data-fu-file"); e.removeAttribute("data-fu-attach"); });
+      const input = findFileInput(composer);
+      if (input) input.setAttribute("data-fu-file", "1");
+      const btn = findLabeled(cfg.attachLabels, nearComposer(composer, 160))[0];
+      if (btn) btn.setAttribute("data-fu-attach", "1");
+      if ((await hooks.native.attach()) && (await waitFor(seen, 6000))) return "file upload";
+    }
+    if (cfg.image && cfg.image.dataUrl) {
+      const file = dataUrlToFile(cfg.image.dataUrl, cfg.image.name);
+      composer.focus();
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      composer.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      if (await waitFor(seen, 4000)) return "paste";
+      const input = findFileInput(composer);
+      if (input) {
+        const dt2 = new DataTransfer();
+        dt2.items.add(file);
+        input.files = dt2.files;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        if (await waitFor(seen, 6000)) return "file input";
+      }
+    }
+    if (log) log("Image could not be attached");
+    return null;
+  }
+
+  async function removePreviews(composer, cfg, hooks) {
+    for (let i = 0; i < 5; i++) {
+      const btn = findLabeled(cfg.removeLabels, nearComposer(composer, 260))[0];
+      if (!btn) return;
+      await click(btn, hooks);
+      await sleep(300);
+    }
+  }
+
+  async function pressEnter(composer, hooks) {
+    if (hooks.native && hooks.native.key) {
+      await click(composer, hooks);
+      return hooks.native.key("Enter");
+    }
+    composer.focus();
+    const o = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
+    composer.dispatchEvent(new KeyboardEvent("keydown", o));
+    composer.dispatchEvent(new KeyboardEvent("keypress", o));
+    composer.dispatchEvent(new KeyboardEvent("keyup", o));
+  }
+
+  // ---------- one conversation ----------
+  async function moveToDone(ctx, row) {
+    const { cfg, hooks, list } = ctx;
+    const lr = rect(list);
+    // The list may redraw at any time, so always look rows up fresh by name + photo.
+    const sameKey = () => getRows(list, cfg).filter((r) => r.key === row.key);
+    const before = sameKey().length;
+    let btn = findLabeled(cfg.doneLabels, (el) => { const r = rect(el); return !list.contains(el) && r.left >= lr.right - 5 && r.top < window.innerHeight * 0.35; })[0];
+    const live = sameKey()[0];
+    if (!btn && live) {
+      await hover(live.el, hooks);
+      await sleep(400);
+      btn = findLabeled(cfg.doneLabels, (el) => live.el.contains(el))[0];
+    }
+    if (!btn) return { ok: false, why: "Couldn't find the Done (✔) button" };
+    await click(btn, hooks);
+    const ok = await waitFor(() => sameKey().length < before, 6000);
+    return ok ? { ok: true } : { ok: false, why: "Clicked Done but the chat stayed in the list" };
+  }
+
+  async function processRow(ctx, row) {
+    const { cfg, hooks, list } = ctx;
+    const out = (status, reason, extra) => Object.assign({ time: new Date().toISOString(), name: row.name, id: null, status, reason: reason || "" }, extra || {});
+    const excludedName = cfg.excludeNames.some((n) => low(n) === low(row.name));
+
+    if (!excludedName && cfg.onlyIfLastFromMe && !row.fromMe) return out("SKIPPED", "Customer wrote last — reply to them yourself");
+
+    // Open the chat and make sure it really is this person
+    const prevId = threadId();
+    const alreadyOpen = headerHasName(row.name, list);
+    if (!row.el.isConnected) {
+      const fresh = getRows(list, cfg).find((r) => r.key === row.key);
+      if (!fresh) return out("SKIPPED", "Chat left the list before it could be opened");
+      row = fresh;
+    }
+    await click(nameElementIn(row), hooks);
+    const opened = await waitFor(() => headerHasName(row.name, list) && (alreadyOpen || threadId() === null || threadId() !== prevId), cfg.pageTimeoutMs);
+    if (!opened) return out("REVIEW", "Couldn't confirm the open chat is this person — nothing sent");
+    await sleep(cfg.stepDelayMs);
+    if (!headerHasName(row.name, list)) return out("REVIEW", "Chat changed while loading — nothing sent");
+
+    const id = threadId() || row.key;
+    if (await hooks.alreadyDone(id)) return out("SKIPPED", "Already handled in this campaign", { id });
+
+    const warn = stopReason(cfg, list);
+    if (warn) return out("STOP", `Meta shows: "${warn}"`, { id });
+
+    const blocked = excludedName ? `Name is "${row.name}"` : bodyHas(cfg.blockedTexts) ? "Can't message this person" : null;
+    if (blocked) {
+      if (cfg.testMode) return out("EXCLUDED", blocked + " (test mode: Done not clicked)", { id });
+      const m = await moveToDone(ctx, row);
+      await hooks.markDone(id);
+      return m.ok ? out("EXCLUDED", blocked + " → moved to Done", { id }) : out("FAILED", blocked + ", but " + m.why, { id, countsAsFailure: true });
+    }
+
+    const composer = findComposer(list);
+    if (!composer) return out("FAILED", "Message box not found", { id });
+
+    await scrollChatToLatestFor(list, composer);
+
+    const text = render(cfg.template, row.name, cfg);
+    if (!(await putText(composer, text, hooks))) {
+      await clearComposer(composer, hooks);
+      return out("FAILED", "Couldn't put the message in the box", { id });
+    }
+    let how = "";
+    if (cfg.image && (cfg.image.dataUrl || cfg.image.native)) {
+      how = await attachImage(composer, cfg, hooks);
+      if (!how && cfg.imageRequired) {
+        await clearComposer(composer, hooks);
+        await removePreviews(composer, cfg, hooks);
+        return out("FAILED", "Image didn't attach — nothing sent", { id });
+      }
+    }
+
+    if (cfg.testMode) {
+      await sleep(1500);
+      await clearComposer(composer, hooks);
+      await removePreviews(composer, cfg, hooks);
+      return out("TEST", "Ready to send (test mode): " + text.slice(0, 60), { id });
+    }
+
+    // Send and confirm the message shows up in the chat
+    const msgList = findMessageList(list, composer);
+    const snip = sig(text).slice(0, 40);
+    const shown = () => countOf(messagesSig(msgList, composer), snip);
+    const failCount = () => cfg.sendFailTexts.reduce((n, t) => n + countOf(low(document.body.innerText), low(t)), 0);
+    const before = shown(), failBefore = failCount();
+
+    const btn = findLabeled(cfg.sendLabels, nearComposer(composer, 120))[0];
+    if (btn) await click(btn, hooks); else await pressEnter(composer, hooks);
+    let ok = await waitFor(() => shown() > before, 3000);
+    if (!ok && composerHasExactlyOnce(composer, text)) {
+      await pressEnter(composer, hooks); // the text is still in the box, so this can't double-send
+    }
+    ok = ok || (await waitFor(() => shown() > before, cfg.pageTimeoutMs));
+    await sleep(800);
+    if (failCount() > failBefore) {
+      await hooks.markDone(id);
+      return out("UNKNOWN", "Meta says the message wasn't sent — not retried", { id, countsAsFailure: true });
+    }
+    if (ok) {
+      await hooks.markDone(id);
+      await hooks.onSent();
+      let note = how ? `with image (${how})` : "text only";
+      if (cfg.moveSentToDone) {
+        const m = await moveToDone(ctx, row);
+        note += m.ok ? ", moved to Done" : ", " + m.why;
+      }
+      return out("SENT", note, { id, text });
+    }
+    if (composerHasExactlyOnce(composer, text)) {
+      await clearComposer(composer, hooks);
+      return out("FAILED", "Send didn't go through (text stayed in the box)", { id });
+    }
+    await hooks.markDone(id); // never retry an unknown outcome
+    await hooks.onSent();
+    return out("UNKNOWN", "Message left the box but didn't appear in the chat — not retried", { id, countsAsFailure: true });
+  }
+
+  async function scrollChatToLatestFor(list, composer) {
+    const msgs = findMessageList(list, composer);
+    if (!msgs) return false;
+    for (let i = 0; i < 3; i++) { msgs.scrollTop = msgs.scrollHeight; await sleep(250); }
+    return msgs.scrollTop + msgs.clientHeight >= msgs.scrollHeight - 8;
+  }
+
+  // ---------- the run ----------
+  const STOP = Symbol("stop");
+
+  class Runner {
+    constructor(config, hooks) {
+      this.cfg = Object.assign({}, DEFAULTS, config || {});
+      this.hooks = hooks;
+      this.state = "idle";
+      this.paused = false;
+      this.stopped = false;
+      this.done = this.run();
+    }
+    setState(state, reason) {
+      this.state = state;
+      Promise.resolve(this.hooks.state({ state, reason: reason || "" })).catch(() => {});
+    }
+    pause(reason) { if (this.state === "running") { this.paused = true; this.setState("paused", reason || "Paused"); } }
+    resume() { if (this.paused) { this.paused = false; this.setState("running"); } }
+    stop() { this.stopped = true; this.paused = false; }
+    async gate() {
+      while (this.paused && !this.stopped) await sleep(250);
+      if (this.stopped) throw STOP;
+    }
+    async wait(ms) {
+      const end = Date.now() + ms;
+      while (Date.now() < end) { await this.gate(); await sleep(Math.min(250, end - Date.now())); }
+    }
+    async run() {
+      const { cfg, hooks } = this;
+      const visited = new Set();
+      let failures = 0, emptyLoads = 0;
+      this.setState("running");
+      try {
+        for (;;) {
+          await this.gate();
+          if ((await hooks.sentToday()) >= cfg.dailyCap) { this.setState("finished", `Daily limit of ${cfg.dailyCap} reached`); return; }
+          const list = findList(cfg);
+          if (!list) { this.pause("Can't find the inbox list. Open Business Suite → Inbox, then press Resume."); continue; }
+          const warn = stopReason(cfg, list);
+          if (warn) { this.pause(`Meta shows a warning: "${warn}". Check the page, then Resume or Stop.`); continue; }
+
+          let rows = getRows(list, cfg).filter((r) => !visited.has(r.key));
+          if (cfg.order === "bottom") rows.reverse();
+          if (!rows.length) {
+            if (await loadMore(list, cfg)) { emptyLoads = 0; continue; }
+            if (++emptyLoads >= 3) { this.setState("finished", "No more conversations in this view"); return; }
+            continue;
+          }
+          emptyLoads = 0;
+          const row = rows[0];
+          visited.add(row.key);
+          await hooks.state({ state: "running", reason: "", current: row.name });
+
+          let res;
+          try { res = await processRow({ cfg, hooks, list }, row); }
+          catch (e) { res = { time: new Date().toISOString(), name: row.name, status: "FAILED", reason: "Error: " + (e && e.message ? e.message : e) }; }
+          if (res.status === "STOP") { await hooks.log(Object.assign(res, { status: "REVIEW" })); this.pause(res.reason + ". Check the page, then Resume or Stop."); continue; }
+          await hooks.log(res);
+          // A chat moved to Done has left the list; another row with the same name
+          // and default photo (e.g. a second "Facebook user") is a different person.
+          if (res.status === "EXCLUDED" && res.reason.endsWith("moved to Done")) visited.delete(row.key);
+
+          const bad = res.status === "FAILED" || res.status === "REVIEW" || res.countsAsFailure;
+          // Only a confirmed send proves sending works; skips and Done moves don't reset the count.
+          failures = bad ? failures + 1 : res.status === "SENT" ? 0 : failures;
+          if (failures >= cfg.maxConsecutiveFailures) {
+            failures = 0;
+            this.pause(`${cfg.maxConsecutiveFailures} problems in a row (last: ${res.reason}). Check the page, then Resume.`);
+            continue;
+          }
+          if (res.status === "SENT" || res.status === "UNKNOWN" || res.status === "TEST") await this.wait(cfg.betweenChatsSec * 1000);
+          else if (res.status === "SKIPPED" && !res.id) await this.wait(50); // skipped from the list, chat never opened
+          else await this.wait(Math.min(cfg.stepDelayMs, 1500));
+        }
+      } catch (e) {
+        if (e === STOP) { this.setState("stopped", "Stopped"); return; }
+        this.setState("stopped", "Error: " + (e && e.message ? e.message : e));
+      }
+    }
+  }
+
+  async function loadMore(list, cfg) {
+    const n = getRows(list, cfg).length, h = list.scrollHeight;
+    list.scrollTop = list.scrollHeight;
+    return waitFor(() => list.scrollHeight > h + 5 || getRows(list, cfg).length > n, 4000, 250);
+  }
+
+  // ---------- tools for the buttons ----------
+  async function loadWholeInbox(cfg, onProgress, maxSeconds = 300) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    const list = findList(cfg);
+    if (!list) return { ok: false, message: "Can't find the inbox list" };
+    const end = Date.now() + maxSeconds * 1000;
+    let still = 0;
+    while (still < 3 && Date.now() < end && !loadWholeInbox.cancel) {
+      const grew = await loadMore(list, cfg);
+      still = grew ? 0 : still + 1;
+      if (onProgress) onProgress(getRows(list, cfg).length);
+    }
+    loadWholeInbox.cancel = false;
+    return { ok: true, rows: getRows(list, cfg).length, reachedEnd: still >= 3, message: still >= 3 ? "Reached the bottom of the inbox" : "Stopped before the bottom" };
+  }
+  async function scrollChatToLatest(cfg) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    const list = findList(cfg);
+    if (!list) return { ok: false, message: "Can't find the inbox list" };
+    const composer = findComposer(list);
+    const ok = await scrollChatToLatestFor(list, composer);
+    return { ok, message: ok ? "Chat scrolled to the latest message" : "Couldn't find the open chat to scroll" };
+  }
+  // What the engine can see on the current page — for the "Check page" button.
+  function diagnose(cfg) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    const list = findList(cfg);
+    const rows = list ? getRows(list, cfg) : [];
+    const composer = list ? findComposer(list) : null;
+    const lr = list ? rect(list) : null;
+    return {
+      url: location.href,
+      threadId: threadId(),
+      inboxList: !!list,
+      rows: rows.length,
+      firstRows: rows.slice(0, 5).map((r) => ({ name: r.name, lastFromMe: r.fromMe, firstName: firstName(r.name, cfg) })),
+      messageBox: !!composer,
+      doneButton: list ? findLabeled(cfg.doneLabels, (el) => !list.contains(el) && rect(el).left >= lr.right - 5).length > 0 : false,
+      sendButton: composer ? findLabeled(cfg.sendLabels, nearComposer(composer, 120)).length > 0 : false,
+      fileInput: composer ? !!findFileInput(composer) : false,
+      cantMessageBanner: !!bodyHas(cfg.blockedTexts),
+      warning: stopReason(cfg, list),
+    };
+  }
+
+  // Desktop app (B): hooks come from Playwright through window.fuHook(name, payload).
+  function bridgeHooks() {
+    const call = (name, payload) => root.fuHook(name, payload === undefined ? null : payload);
+    return {
+      log: (e) => call("log", e),
+      state: (s) => call("state", s),
+      alreadyDone: (id) => call("alreadyDone", id),
+      markDone: (id) => call("markDone", id),
+      sentToday: () => call("sentToday"),
+      onSent: () => call("onSent"),
+      native: {
+        click: (x, y) => call("native.click", { x, y }),
+        hover: (x, y) => call("native.hover", { x, y }),
+        typeText: (text) => call("native.typeText", text),
+        key: (k) => call("native.key", k),
+        attach: () => call("native.attach"),
+      },
+    };
+  }
+
+  const api = {
+    VERSION,
+    DEFAULTS,
+    firstName,
+    render,
+    current: null,
+    start(config, hooks) {
+      if (api.current && !["stopped", "finished"].includes(api.current.state)) throw new Error("Already running");
+      api.current = new Runner(config, hooks);
+      return api.current;
+    },
+    startWithBridge(config) { api.start(config, bridgeHooks()); return true; },
+    pause() { api.current && api.current.pause("Paused"); },
+    resume() { api.current && api.current.resume(); },
+    stop() { api.current && api.current.stop(); loadWholeInbox.cancel = true; },
+    status() { return api.current ? api.current.state : "idle"; },
+    tools: { loadWholeInbox, scrollChatToLatest, diagnose },
+  };
+  root.FollowUpEngine = api;
+})(typeof window !== "undefined" ? window : globalThis);

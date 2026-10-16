@@ -1,0 +1,223 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Inbox (practice copy)</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.35 "Segoe UI", system-ui, sans-serif; color: #1c1e21; background: #f0f2f5; height: 100vh; overflow: hidden; }
+  #app { display: grid; grid-template-columns: 56px 330px minmax(0, 1fr) 230px; height: 100vh; }
+  #nav { background: #fff; border-right: 1px solid #dde; }
+  #left { background: #fff; display: flex; flex-direction: column; border-right: 1px solid #dde; min-height: 0; }
+  #left header { padding: 12px; border-bottom: 1px solid #eee; }
+  #left header b { font-size: 18px; }
+  .tabs span { margin-right: 10px; color: #1b74e4; }
+  #list { flex: 1; overflow-y: auto; min-height: 0; }
+  .card { margin: 8px; padding: 10px; border-left: 4px solid #3aa; background: #f7fbfb; height: 150px; }
+  .row { position: relative; display: flex; gap: 10px; padding: 10px 12px; height: 64px; cursor: pointer; }
+  .row:hover, .row.sel { background: #eef3fb; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; }
+  .meta { min-width: 0; flex: 1; }
+  .top { display: flex; justify-content: space-between; }
+  .name { font-weight: 600; }
+  .time { color: #65676b; font-size: 11px; }
+  .preview { color: #65676b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .unread .preview { color: #000; font-weight: 700; }
+  .rowdone { position: absolute; right: 8px; top: 20px; opacity: 0; border: 0; background: #2a7; color: #fff; width: 28px; height: 28px; }
+  .row:hover .rowdone { opacity: 1; }
+  #main { display: flex; flex-direction: column; min-height: 0; background: #fff; }
+  #head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #eee; min-height: 60px; }
+  #head .actions { margin-left: auto; display: flex; gap: 6px; }
+  #head .actions button { width: 32px; height: 32px; border: 1px solid #ccd; background: #fff; }
+  #msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+  .b { max-width: 60%; padding: 8px 12px; border-radius: 16px; background: #e4e6eb; align-self: flex-start; white-space: pre-wrap; }
+  .b.me { align-self: flex-end; background: #0a7cff; color: #fff; }
+  .b img { width: 120px; height: 90px; display: block; }
+  #bottom { border-top: 1px solid #eee; padding: 10px; }
+  #banner { text-align: center; color: #444; padding: 14px; background: #f5f6f7; }
+  #previews { display: flex; gap: 6px; }
+  #previews .pv { position: relative; }
+  #previews img { width: 60px; height: 60px; object-fit: cover; }
+  #previews button { position: absolute; top: -6px; right: -6px; }
+  #composerRow { display: flex; gap: 8px; align-items: center; }
+  #composer { flex: 1; min-height: 36px; max-height: 120px; overflow: auto; border: 1px solid #ccd; border-radius: 18px; padding: 8px 12px; white-space: pre-wrap; }
+  #right { background: #fff; padding: 12px; }
+  .dialog { position: fixed; inset: 30% 30% auto 30%; background: #fff; border: 2px solid #c00; padding: 20px; z-index: 9; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="nav"></div>
+  <div id="left">
+    <header><b>Inbox</b><div class="tabs"><span>All messages</span><span>Messenger</span></div></header>
+    <div id="list"><div class="card">Connect to Instagram<br>Connect an Instagram profile to manage comments.<br><button>Not now</button> <button>Connect</button></div><div id="rows"></div></div>
+  </div>
+  <div id="main"><div id="head"></div><div id="msgs"></div><div id="bottom"></div></div>
+  <div id="right"><b id="rname"></b><p>About</p></div>
+</div>
+<script>
+(() => {
+  const AV = (c) => "data:image/svg+xml," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><circle cx='20' cy='20' r='20' fill='${c}'/></svg>`);
+  const colors = ["#c66", "#6a6", "#66c", "#ca4", "#4ac", "#a4c", "#888"];
+  const base = [
+    ["Lista Maison", { blocked: true }],
+    ["Born Twi Struggle", { last: "them", text: "Yeah" }],
+    ["Gabriella B Iramo", {}],
+    ["Facebook user", { noImg: true }],
+    ["Beroro Beroro", {}],
+    ["ROBIN PIATS", {}],
+    ["Janet Koae", { blocked: true }],
+    ["Nguyễn Văn Phước", {}],
+    ["Moses Jacob", {}],
+    ["🌸 Joy Santos", {}],
+    ["Abby Gene", { last: "them", text: "I'm interesting" }],
+    ["Sinman Blome", {}],
+    ["Facebook user", { noImg: true }],
+    ["Rup Man Gu", {}],
+    ["TeeJay Mangs", {}],
+    ["Zner Naapmac", {}],
+    ["Deii Diesel", { last: "them", text: "no" }],
+    ["Carla JR Tauedea Vada", {}],
+    ["Alois Mabep", {}],
+    ["Julie Lucas", { blocked: true }],
+    ["Joshua Gerua", {}],
+    ["Evah August Iamu", {}],
+  ];
+  const convs = base.map(([name, o], i) => ({
+    id: String(100087247013200 + i), name, blocked: !!o.blocked, noImg: !!o.noImg,
+    color: colors[i % colors.length],
+    msgs: Array.from({ length: i % 3 === 0 ? 4 : 30 }, (_, k) => ({ me: k % 2 === 1, text: k % 2 ? "*GOOD NEWS! There's more to explore… (" + k + ")" : "How much po? (" + k + ")" }))
+      .concat(o.last === "them" ? [{ me: false, text: o.text }] : [{ me: true, text: "*GOOD NEWS! There's more to explore with our new package" }]),
+    time: ["1:30AM", "Fri", "Thu", "Apr 13"][i % 4],
+  }));
+  const mock = window.__mock = { sent: [], done: [], flags: {}, trusted: [], loaded: 12, selected: null, convs };
+  const $ = (s) => document.querySelector(s);
+  const rowsEl = $("#rows");
+
+  function visible() { return convs.filter((c) => !c.done).slice(0, mock.loaded); }
+  function renderList() {
+    rowsEl.innerHTML = "";
+    for (const c of visible()) {
+      const last = c.msgs[c.msgs.length - 1];
+      const r = document.createElement("div");
+      r.className = "row" + (last.me ? "" : " unread") + (mock.selected === c ? " sel" : "");
+      r.dataset.id = c.id;
+      r.innerHTML = (c.noImg
+          ? `<div class="avatar" style="background:#ddd"><svg width="40" height="40"><circle cx="20" cy="15" r="7" fill="#fff"/></svg></div>`
+          : `<img class="avatar" src="${AV(c.color)}" alt="">`) +
+        `<div class="meta"><div class="top"><span class="name"></span><span class="time">${c.time}</span></div><div class="preview"></div></div>` +
+        `<button class="rowdone" aria-label="Move to done">✓</button>`;
+      r.querySelector(".name").textContent = c.name;
+      r.querySelector(".preview").textContent = (last.me ? "You: " : "") + last.text;
+      rowsEl.appendChild(r);
+    }
+  }
+  $("#list").addEventListener("scroll", () => {
+    const l = $("#list");
+    if (l.scrollTop + l.clientHeight >= l.scrollHeight - 5 && mock.loaded < convs.length && !mock.loading) {
+      mock.loading = true;
+      setTimeout(() => { mock.loaded += 6; mock.loading = false; renderList(); }, 400);
+    }
+  });
+  rowsEl.addEventListener("click", (e) => {
+    const r = e.target.closest(".row");
+    if (!r) return;
+    mock.trusted.push(e.isTrusted);
+    const c = convs.find((x) => x.id === r.dataset.id);
+    if (e.target.closest(".rowdone")) { moveToDone(c); return; }
+    open(c);
+  });
+
+  function open(c) {
+    $("#head").innerHTML = ""; $("#msgs").innerHTML = ""; $("#bottom").innerHTML = "<div style='padding:10px'>Loading…</div>";
+    setTimeout(() => {
+      mock.selected = c;
+      history.replaceState(null, "", location.pathname + "?asset_id=1&selected_item_id=" + c.id + "&thread_type=FB_MESSAGE");
+      renderMain();
+      renderList();
+    }, 350);
+  }
+  function renderMain() {
+    const c = mock.selected;
+    if (!c) { $("#head").innerHTML = ""; $("#msgs").innerHTML = ""; $("#bottom").innerHTML = ""; $("#rname").textContent = ""; return; }
+    const shown = mock.flags.wrongHeaderFor === c.name ? "Someone Else" : c.name;
+    $("#head").innerHTML = `<img class="avatar" src="${AV(c.color)}"><div><div class="hname"></div><small>Assign this conversation ▾</small></div>
+      <div class="actions"><button aria-label="Mark as spam">!</button><button aria-label="Delete">🗑</button><button aria-label="Star">★</button><button aria-label="Mark as unread">✉</button><button aria-label="Move to done">✓</button></div>`;
+    $("#head .hname").textContent = shown;
+    $("#rname").textContent = shown;
+    $("#head [aria-label='Move to done']").onclick = () => moveToDone(c);
+    renderMsgs();
+    if (c.blocked) {
+      $("#bottom").innerHTML = `<div id="banner">You are no longer able to send messages to this person. <a href="#">Learn more</a></div>`;
+      return;
+    }
+    $("#bottom").innerHTML = `<div id="previews"></div><div id="composerRow">
+      <button aria-label="Attach a file">📎</button><input type="file" accept="image/*,video/*" style="display:none">
+      <div id="composer" contenteditable="true" role="textbox" aria-label="Reply in Messenger…"></div>
+      <button aria-label="Send">➤</button></div>`;
+    const comp = $("#composer"), fileIn = $("#bottom input[type=file]");
+    $("#bottom [aria-label='Attach a file']").onclick = () => fileIn.click();
+    fileIn.onchange = () => { for (const f of fileIn.files) addPreview(f); fileIn.value = ""; };
+    comp.addEventListener("paste", (e) => {
+      if (mock.flags.ignorePaste) return;
+      e.preventDefault();
+      const files = [...(e.clipboardData.files || [])];
+      if (files.length) { files.forEach(addPreview); return; }
+      document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+    });
+    comp.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); mock.trusted.push(e.isTrusted); send(); } });
+    $("#bottom [aria-label='Send']").onclick = (e) => { mock.trusted.push(e.isTrusted); send(); };
+  }
+  function renderMsgs() {
+    const c = mock.selected, box = $("#msgs");
+    box.innerHTML = "";
+    for (const m of c.msgs) {
+      const d = document.createElement("div");
+      d.className = "b" + (m.me ? " me" : "");
+      if (m.img) d.innerHTML = `<img src="${m.img}">`; else d.textContent = m.text;
+      box.appendChild(d);
+    }
+    box.scrollTop = 0; // starts at the top, so "scroll to latest" has work to do
+  }
+  function addPreview(f) {
+    const pv = document.createElement("div");
+    pv.className = "pv";
+    pv.innerHTML = `<img src="${URL.createObjectURL(f)}"><button aria-label="Remove attachment">×</button>`;
+    pv.querySelector("button").onclick = () => pv.remove();
+    pv.dataset.name = f.name;
+    $("#previews").appendChild(pv);
+  }
+  function send() {
+    const c = mock.selected, comp = $("#composer");
+    const text = comp.innerText.replace(/\n$/, "").trim();
+    const imgs = [...document.querySelectorAll("#previews .pv")];
+    if (!text && !imgs.length) return;
+    const rec = { id: c.id, name: c.name, text, images: imgs.map((p) => p.dataset.name) };
+    comp.innerHTML = ""; $("#previews").innerHTML = "";
+    mock.sent.push(rec);
+    if (mock.flags.swallowSend) return; // message vanishes: outcome unknown
+    setTimeout(() => {
+      for (const p of imgs) c.msgs.push({ me: true, img: p.querySelector("img").src });
+      if (text) c.msgs.push({ me: true, text });
+      convs.splice(convs.indexOf(c), 1); convs.unshift(c); // sent chats jump to the top, like Business Suite
+      renderMsgs(); $("#msgs").scrollTop = 1e9; renderList();
+      if (mock.flags.blockAfter && mock.sent.length >= mock.flags.blockAfter && !document.querySelector(".dialog")) {
+        const d = document.createElement("div");
+        d.className = "dialog"; d.setAttribute("role", "dialog");
+        d.textContent = "You're temporarily blocked from sending messages.";
+        document.body.appendChild(d);
+      }
+    }, 250);
+  }
+  function moveToDone(c) {
+    setTimeout(() => {
+      c.done = true; mock.done.push(c.id);
+      if (mock.selected === c) mock.selected = null;
+      renderMain(); renderList();
+    }, 300);
+  }
+  renderList();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FollowUp Copilot</title>
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>FollowUp Copilot</h1>
+    <div id="where" class="sub">Looking for your Business Suite tab…</div>
+  </div>
+  <span id="pill" class="pill idle">Idle</span>
+</header>
+
+<section class="card run">
+  <div id="reason" class="reason">Press Start when your Inbox is open.</div>
+  <div id="current" class="current"></div>
+  <div class="controls">
+    <button id="start" class="primary">Start</button>
+    <button id="pause">Pause</button>
+    <button id="stop" class="danger">Stop</button>
+  </div>
+  <div class="counts">
+    <div><b id="cSent">0</b><span>Sent today</span><small id="cCap">of 300</small></div>
+    <div><b id="cDone">0</b><span>To Done</span></div>
+    <div><b id="cSkip">0</b><span>Skipped</span></div>
+    <div><b id="cProb">0</b><span>Problems</span></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Follow-up message</h2>
+  <textarea id="tplText" rows="5" placeholder="Hi {first_name}! Just following up…"></textarea>
+  <div class="row">
+    <button id="insName" class="small">+ First name</button>
+    <span class="hint">{first_name} becomes their first name, or "<span id="fbName">there</span>" if unclear</span>
+  </div>
+  <div class="preview"><span class="label">Preview for <i>Lista Maison</i></span><div id="tplPreview"></div></div>
+  <div class="image">
+    <div id="imgThumb" class="thumb empty">No image</div>
+    <div class="imgside">
+      <label class="filebtn">Choose image<input id="imgFile" type="file" accept="image/*"></label>
+      <button id="imgRemove" class="small" hidden>Remove image</button>
+      <div id="imgName" class="hint"></div>
+    </div>
+  </div>
+</section>
+
+<details class="card" id="settingsBox">
+  <summary><h2>Settings</h2><span class="hint">Applied the next time you press Start</span></summary>
+  <div class="grid">
+    <label>Seconds between chats<input id="sBetween" type="number" min="0" step="1"></label>
+    <label>Wait after opening a chat (sec)<input id="sStep" type="number" min="0.3" step="0.1"></label>
+    <label>Daily limit<input id="sCap" type="number" min="1" step="1"></label>
+    <label>Start from<select id="sOrder"><option value="top">Top of the list (newest)</option><option value="bottom">Bottom of the list (oldest loaded)</option></select></label>
+  </div>
+  <label class="check"><input id="sLastMine" type="checkbox"> Only follow up when the last message is mine <span class="hint">(skips customers who replied)</span></label>
+  <label class="check"><input id="sSentDone" type="checkbox"> Move chats to Done after sending</label>
+  <label class="check"><input id="sImgReq" type="checkbox"> Don't send if the image fails to attach</label>
+  <label class="check test"><input id="sTest" type="checkbox"> Test mode: fill the message box, but never press Send or Done</label>
+  <details class="adv">
+    <summary>Advanced: words the app looks for</summary>
+    <label>"Can't message" banner text (one per line)<textarea id="aBlocked" rows="2"></textarea></label>
+    <label>Names that go straight to Done (one per line)<textarea id="aNames" rows="2"></textarea></label>
+    <label>Meta warnings that pause the run (one per line)<textarea id="aStop" rows="4"></textarea></label>
+    <button id="aReset" class="small">Reset to defaults</button>
+  </details>
+</details>
+
+<section class="card">
+  <h2>Tools</h2>
+  <div class="tools">
+    <button id="tLoad">Scroll inbox to the bottom</button>
+    <button id="tLatest">Scroll chat to latest</button>
+    <button id="tCheck">Check page</button>
+  </div>
+  <pre id="toolOut" class="toolout" hidden></pre>
+</section>
+
+<section class="card">
+  <div class="loghead"><h2>Activity</h2><div><button id="lExport" class="small">Export CSV</button> <button id="lClear" class="small">Clear</button></div></div>
+  <ol id="log" class="log"></ol>
+  <div class="campaign"><span id="remembered">0 chats remembered in this campaign</span><button id="newCampaign" class="small">New campaign</button></div>
+  <p class="hint">A campaign remembers every chat it already messaged, so restarting never double-sends. Start a new campaign when you send a new follow-up.</p>
+</section>
+
+<div id="confirm" class="confirm" hidden>
+  <p id="confirmText"></p>
+  <div class="controls"><button id="confirmYes" class="danger">Yes</button><button id="confirmNo">Cancel</button></div>
+</div>
+<script src="sidepanel.js"></script>
+</body>
+</html>
