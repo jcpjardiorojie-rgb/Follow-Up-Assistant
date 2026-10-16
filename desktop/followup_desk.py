@@ -16,6 +16,8 @@ C = {"bg": "#f4f6f4", "surface": "#ffffff", "line": "#d3dad5", "fg": "#18211d", 
      "accent": "#0e6b58", "accent_soft": "#d6ede6", "good": "#1f7a3e", "good_soft": "#ddf1e3",
      "warn": "#9a6212", "warn_soft": "#f7e9cf", "bad": "#a83636", "bad_soft": "#f6dcdc"}
 FONT = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
+ORDER_LABELS = {"top": "Top (newest first)", "bottom": "Bottom (scrolls down first, then goes up)",
+                "screen": "Lowest chat on screen now (no scrolling), then up"}
 STATE_LOOK = {"idle": ("Idle", C["line"], C["fg"]), "ready": ("Ready", C["good_soft"], C["good"]), "running": ("Running", C["good_soft"], C["good"]),
               "paused": ("Paused", C["warn_soft"], C["warn"]), "stopped": ("Stopped", C["accent_soft"], C["accent"]),
               "finished": ("Finished", C["accent_soft"], C["accent"]), "error": ("Problem", C["bad_soft"], C["bad"])}
@@ -188,12 +190,12 @@ class App:
         self.v_between = tk.DoubleVar(value=self.s["betweenChatsSec"])
         self.v_step = tk.DoubleVar(value=self.s["stepDelayMs"] / 1000)
         self.v_cap = tk.IntVar(value=self.s["dailyCap"])
-        self.v_order = tk.StringVar(value="Top (newest first)" if self.s["order"] == "top" else "Bottom (scrolls down first, then goes up)")
+        self.v_order = tk.StringVar(value=ORDER_LABELS.get(self.s["order"], ORDER_LABELS["top"]))
         fields = [("Seconds between chats", ttk.Spinbox(g, from_=0, to=600, increment=1, textvariable=self.v_between, width=8)),
                   ("Wait after opening a chat (sec)", ttk.Spinbox(g, from_=0.3, to=20, increment=0.1, textvariable=self.v_step, width=8)),
                   ("Daily limit", ttk.Spinbox(g, from_=1, to=100000, increment=50, textvariable=self.v_cap, width=8)),
                   ("Start from", ttk.Combobox(g, textvariable=self.v_order, state="readonly", width=38,
-                                              values=["Top (newest first)", "Bottom (scrolls down first, then goes up)"]))]
+                                              values=list(ORDER_LABELS.values())))]
         for i, (label, w) in enumerate(fields):
             ttk.Label(g, text=label, style="Card.TLabel").grid(row=i, column=0, sticky="w", pady=2)
             w.grid(row=i, column=1, sticky="w", padx=8, pady=2)
@@ -313,7 +315,7 @@ class App:
             s["dailyCap"] = max(1, int(self.v_cap.get()))
         except (tk.TclError, ValueError):
             raise RuntimeError("Check the numbers in Settings.")
-        s["order"] = "top" if self.v_order.get().startswith("Top") else "bottom"
+        s["order"] = next((k for k, v in ORDER_LABELS.items() if v == self.v_order.get()), "top")
         s["onlyIfLastFromMe"] = self.v_last.get()
         s["moveSentToDone"] = self.v_sdone.get()
         s["imageRequired"] = self.v_imgreq.get()

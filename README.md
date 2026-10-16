@@ -92,6 +92,12 @@ When you press Start, the app first scrolls the inbox all the way down until no 
 first and works upward to the top. Chats you message jump to the top of Business Suite's list, and the
 app remembers them, so they're never messaged twice. Stop and Pause work while it scrolls.
 
+**To start from a chat you choose:** scroll the inbox so that chat is the lowest one you can see, then use
+**Start from: Lowest chat on screen now (no scrolling)**. It starts there and goes up; chats below it are left alone.
+
+**Moving to Done is always on** for "Facebook user" chats and chats showing "You are no longer able to send
+messages…" (except in Test mode). Chats you message are moved too only if you tick "Move chats to Done after sending".
+
 **Scroll inbox to the bottom** (the separate button) can also be paused: press it once to start, again to
 **Pause scrolling**, again to **Resume scrolling**. **Stop** ends it.
 
@@ -128,7 +134,7 @@ If you install both versions, give them different keys so one key press doesn't 
 | Seconds between chats | Pause after each sent message |
 | Wait after opening a chat | Time for the chat to load before reading it. Raise it if your internet is slow. |
 | Daily limit | Stops after this many sends today |
-| Start from | **Top**: newest first. **Bottom**: scrolls down to the oldest chat automatically, then goes up |
+| Start from | **Top**: newest first. **Bottom**: scrolls down to the oldest chat automatically, then goes up. **Lowest chat on screen**: starts at the bottom chat you can see right now (no scrolling down), goes up, and leaves the chats below it alone |
 | Only follow up when the last message is mine | Skips people who replied to you, so you can answer them personally |
 | Move chats to Done after sending | Also moves successfully messaged chats to Done |
 | Don't send if the image fails to attach | Skips that chat instead of sending text only |

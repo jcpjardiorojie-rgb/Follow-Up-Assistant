@@ -195,3 +195,32 @@ def test_scroll_inbox_button_can_pause_resume_and_stop(page):
     page.wait_for_function("window.__scrollDone", timeout=10000)
     assert page.evaluate("__scrollDone.message") == "Scrolling stopped"
     assert page.evaluate("FollowUpEngine.tools.scrollState()") == "idle"
+
+
+def test_screen_order_starts_at_lowest_visible_chat_and_leaves_lower_ones_alone(page):
+    page.evaluate("FollowUpEngine.tools.loadWholeInbox({}, null, 30)")  # 22 chats loaded
+    page.evaluate("document.querySelector('#list').scrollTop = 500")  # middle of the list on screen
+    page.wait_for_timeout(300)
+    order = page.evaluate("""() => {
+      const l = document.querySelector('#list').getBoundingClientRect();
+      const rows = [...document.querySelectorAll('#rows .row')];
+      let start = -1;
+      rows.forEach((r, i) => { const b = r.getBoundingClientRect(); if (b.bottom > l.top && b.top + b.height / 2 <= l.bottom) start = i; });
+      return { start, ids: rows.map(r => r.dataset.id) };
+    }""")
+    start = order["start"]
+    assert 0 < start < len(order["ids"]) - 3  # some chats really are below the screen
+    below = set(order["ids"][start + 1:])
+    res = run(page, order="screen", maxWaitMs=300000)
+    m = mock(page)
+    assert res["state"] == "finished"
+    assert any("the lowest chat on screen" in s.get("reason", "") for s in res["states"])
+    touched = [s["id"] for s in m["sent"]] + m["done"]
+    assert touched and not set(touched) & below  # nothing below the screen was sent or moved
+    # It worked upward from the lowest visible chat: the first chat handled is the lowest eligible one on screen
+    above = order["ids"][: start + 1]
+    first = res["log"][0]
+    names = {i: n for i, n, _ in m["names"]}
+    assert first["name"] == names[above[-1]]
+    # and it reached the top: every eligible chat above was handled
+    assert len([s for s in m["sent"]]) + len(m["done"]) >= len(above) - 3  # 3 skipped (customer wrote last) at most

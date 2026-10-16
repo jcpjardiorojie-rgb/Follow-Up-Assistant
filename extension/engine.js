@@ -45,7 +45,9 @@
     youPrefixes: ["You:", "You sent", "You replied", "You unsent"],
 
     // Behaviour
-    order: "top", // "top" (newest first) or "bottom" (scroll to the very bottom first, then work upward)
+    // "top": newest first. "bottom": scroll to the very bottom first, then work upward.
+    // "screen": start at the lowest chat visible right now (no scrolling down), then work upward.
+    order: "top",
     loadAllMaxMinutes: 30, // longest time spent scrolling to the bottom before starting
     onlyIfLastFromMe: true, // skip chats where the customer wrote last
     moveSentToDone: false,
@@ -636,6 +638,8 @@
       this.setState("running");
       try {
         if (cfg.order === "bottom") await this.scrollToBottomFirst();
+        const screen = cfg.order === "screen" ? await this.lowestOnScreen() : null;
+        if (cfg.order === "screen" && !screen) return;
         for (;;) {
           await this.gate();
           if ((await hooks.sentToday()) >= cfg.dailyCap) { this.setState("finished", `Daily limit of ${cfg.dailyCap} reached`); return; }
@@ -644,12 +648,14 @@
           const warn = stopReason(cfg, list);
           if (warn) { this.pause(`Meta shows a warning: "${warn}". Check the page, then Resume or Stop.`); continue; }
 
-          let rows = getRows(list, cfg).filter((r) => !visited.has(r.key));
-          if (cfg.order === "bottom") rows.reverse();
+          let rows = getRows(list, cfg);
+          if (screen) rows = onlyFromScreenUp(rows, screen);
+          rows = rows.filter((r) => !visited.has(r.key));
+          if (cfg.order !== "top") rows.reverse();
           if (!rows.length) {
             // Bottom-up: everything is loaded already, so look further UP (needed when the
             // page only draws the rows on screen). Top-down: load older chats below.
-            if (cfg.order === "bottom") {
+            if (cfg.order !== "top") {
               if (await scrollUp(list)) continue;
               this.setState("finished", "Reached the top of the inbox");
               return;
@@ -689,6 +695,30 @@
         this.setState("stopped", "Error: " + (e && e.message ? e.message : e));
       }
     }
+    // "Lowest chat on screen": remembers which chats sit below the lowest visible one, so they're left alone.
+    async lowestOnScreen() {
+      const { cfg, hooks } = this;
+      let list = findList(cfg);
+      while (!list) {
+        this.pause("Can't find the inbox list. Open Business Suite → Inbox, then press Resume.");
+        await this.gate();
+        list = findList(cfg);
+      }
+      const lr = rect(list);
+      const bottom = Math.min(lr.bottom, window.innerHeight);
+      const rows = getRows(list, cfg);
+      let start = -1;
+      rows.forEach((r, i) => {
+        const rr = rect(r.el);
+        if (rr.bottom > lr.top && rr.top + rr.height / 2 <= bottom) start = i;
+      });
+      if (start < 0) { this.setState("finished", "No chats are visible in the inbox list"); return null; }
+      const below = {};
+      for (const r of rows.slice(start + 1)) below[r.key] = (below[r.key] || 0) + 1;
+      await hooks.state({ state: "running", reason: `Starting from “${rows[start].name}”, the lowest chat on screen, and going up.`, current: "" });
+      return { below, known: new Set(rows.map((r) => r.key)) };
+    }
+
     // Keeps scrolling the inbox down until no older chats load. Pause/Stop work during it.
     async scrollToBottomFirst() {
       const { cfg, hooks } = this;
@@ -709,6 +739,22 @@
       }
       await hooks.state({ state: "running", reason: "Reached the bottom of the inbox. Sending from the bottom up." });
     }
+  }
+
+  // Leaves out the chats that were below the screen at the start (counted from the bottom, so a
+  // repeated name like "Facebook user" still works), plus chats that load in below them later.
+  function onlyFromScreenUp(rows, screen) {
+    const keep = rows.map(() => true);
+    const fromEnd = {};
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const k = rows[i].key;
+      fromEnd[k] = (fromEnd[k] || 0) + 1;
+      if (fromEnd[k] <= (screen.below[k] || 0)) keep[i] = false;
+    }
+    let lastKnown = -1;
+    rows.forEach((r, i) => { if (keep[i] && screen.known.has(r.key)) lastKnown = i; });
+    rows.forEach((r, i) => { if (i > lastKnown && !screen.known.has(r.key)) keep[i] = false; });
+    return rows.filter((_, i) => keep[i]);
   }
 
   async function scrollUp(list) {
