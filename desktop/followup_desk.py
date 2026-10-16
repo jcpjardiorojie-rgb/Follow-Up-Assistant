@@ -9,14 +9,14 @@ import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from bridge import DEFAULT_SETTINGS, Controller, Store
+from bridge import DEFAULT_SETTINGS, INBOX_URL, Controller, Store, asset_id, check_inbox_url
 from hotkeys import Hotkeys, describe
 
 C = {"bg": "#f4f6f4", "surface": "#ffffff", "line": "#d3dad5", "fg": "#18211d", "muted": "#56635c",
      "accent": "#0e6b58", "accent_soft": "#d6ede6", "good": "#1f7a3e", "good_soft": "#ddf1e3",
      "warn": "#9a6212", "warn_soft": "#f7e9cf", "bad": "#a83636", "bad_soft": "#f6dcdc"}
 FONT = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
-STATE_LOOK = {"idle": ("Idle", C["line"], C["fg"]), "running": ("Running", C["good_soft"], C["good"]),
+STATE_LOOK = {"idle": ("Idle", C["line"], C["fg"]), "ready": ("Ready", C["good_soft"], C["good"]), "running": ("Running", C["good_soft"], C["good"]),
               "paused": ("Paused", C["warn_soft"], C["warn"]), "stopped": ("Stopped", C["accent_soft"], C["accent"]),
               "finished": ("Finished", C["accent_soft"], C["accent"]), "error": ("Problem", C["bad_soft"], C["bad"])}
 
@@ -166,6 +166,19 @@ class App:
         self.img_name.pack(anchor="w", pady=4)
         self._show_image()
         self._on_text()
+
+        ttk.Separator(card).pack(fill="x", pady=(12, 8))
+        ttk.Label(card, text="Your inbox link (optional)", style="H.TLabel").pack(anchor="w")
+        ttk.Label(card, text="Paste it from Chrome's address bar. “Open Chrome” then goes straight to it.",
+                  style="Muted.TLabel").pack(anchor="w")
+        self.v_inbox = tk.StringVar(value=self.s.get("inboxUrl", ""))
+        e = ttk.Entry(card, textvariable=self.v_inbox)
+        e.pack(fill="x", pady=(4, 2))
+        e.bind("<FocusOut>", lambda _e: self._save_inbox_url())
+        e.bind("<Return>", lambda _e: self._save_inbox_url())
+        self.inbox_msg = ttk.Label(card, text="", style="Muted.TLabel", wraplength=520)
+        self.inbox_msg.pack(anchor="w")
+        self._save_inbox_url(quiet=True)
 
     def _build_settings(self, parent):
         card = self._card(parent, "Settings", "applied when you press Start")
@@ -344,9 +357,25 @@ class App:
             self.events.put(("result", (label, err, None if err else f.result(), done)))
         fut.add_done_callback(cb)
 
+    def _save_inbox_url(self, quiet=False):
+        url, err = check_inbox_url(self.v_inbox.get())
+        if err:
+            self.inbox_msg.config(text=err, foreground=C["bad"])
+            return False
+        self.s["inboxUrl"] = url
+        self.v_inbox.set(url)
+        if not quiet:
+            self.store.save_settings()
+        pid = asset_id(url)
+        self.inbox_msg.config(text=(f"Saved. Only runs on this Page (id {pid})." if pid else "Saved.") if url else "",
+                              foreground=C["good"])
+        return True
+
     def _open(self):
+        if not self._save_inbox_url():
+            return
         self.reason.config(text="Opening Chrome… If you see a login page, log in to Facebook once. This window remembers you after that.")
-        self._call(self.ctl.open_browser(), label="open")
+        self._call(self.ctl.open_browser(url=self.s.get("inboxUrl") or INBOX_URL), label="open")
 
     def _start(self):
         try:
@@ -492,7 +521,8 @@ class App:
                     self._hotkey(data)
                 elif kind == "browser":
                     if data == "open":
-                        self.reason.config(text="Chrome is open. Log in if asked, go to Inbox, then press Start. Tip: try Test mode first.")
+                        if self.state not in ("running", "paused"):
+                            self._set_state({"state": "ready", "reason": "Chrome is open. Log in if asked, check that your Inbox shows, then press Start. Tip: try Test mode first."})
                     else:
                         self._set_state({"state": "idle", "reason": "Chrome was closed. Press “Open Chrome” to continue."})
                 elif kind == "result":
@@ -508,7 +538,7 @@ class App:
     def _set_state(self, st):
         s = st.get("state", "idle")
         if s in STATE_LOOK:
-            self.state = s if s != "error" else "idle"
+            self.state = s if s not in ("error", "ready") else "idle"
             text, bg, fg = STATE_LOOK[s]
             self.pill.config(text=text, bg=bg, fg=fg)
         if st.get("reason") or s != "running":

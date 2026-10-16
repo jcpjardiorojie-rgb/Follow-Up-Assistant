@@ -8,7 +8,7 @@ const DEF = {
   stopTexts: ["temporarily blocked", "temporarily restricted", "You can't use this feature right now", "We limit how often",
     "Your account has been restricted", "account is restricted", "Confirm your identity", "Security check", "Action blocked"],
   order: "top", onlyIfLastFromMe: true, moveSentToDone: false, testMode: false, imageRequired: true,
-  stepDelayMs: 1200, betweenChatsSec: 8, dailyCap: 300,
+  stepDelayMs: 1200, betweenChatsSec: 8, dailyCap: 300, inboxUrl: "",
 };
 const BAD = new Set(["FAILED", "REVIEW", "UNKNOWN"]);
 let settings = {}, template = {}, tabId = null, state = "idle", scrollState = "idle";
@@ -30,6 +30,8 @@ const saveTemplate = () => chrome.storage.local.set({ template });
 const lines = (v) => v.split("\n").map((s) => s.trim()).filter(Boolean);
 function fillForm() {
   $("tplText").value = template.text || "";
+  $("inboxUrl").value = settings.inboxUrl || "";
+  showInboxMsg();
   $("sBetween").value = settings.betweenChatsSec;
   $("sStep").value = settings.stepDelayMs / 1000;
   $("sCap").value = settings.dailyCap;
@@ -124,13 +126,13 @@ function watchConnection() {
   reconnectTimer = setInterval(async () => {
     if (state !== "offline") { clearInterval(reconnectTimer); return; }
     const r = await send("ping");
-    if (r.ok) { clearInterval(reconnectTimer); setState(r.state !== "idle" ? r.state : "idle", r.state !== "idle" && r.last ? r.last.reason : "Connected. Press Start when your Inbox is open."); }
+    if (r.ok) { clearInterval(reconnectTimer); setState(r.state !== "idle" ? r.state : "idle", r.state !== "idle" && r.last ? r.last.reason : "Connected. Write your message, then press Start."); }
   }, 3000);
 }
 
 function setState(s, reason, current) {
   state = s;
-  const label = { idle: "Idle", running: "Running", paused: "Paused", stopped: "Stopped", finished: "Finished", offline: "Not connected" }[s] || s;
+  const label = { idle: "Ready", running: "Running", paused: "Paused", stopped: "Stopped", finished: "Finished", offline: "Not connected" }[s] || s;
   $("pill").textContent = label;
   $("pill").className = "pill " + s;
   if (reason !== undefined) $("reason").textContent = reason || (s === "running" ? "Working through your inbox…" : "");
@@ -181,6 +183,30 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 chrome.storage.onChanged.addListener((ch) => {
   if (ch.campaign) $("remembered").textContent = `${(ch.campaign.newValue && ch.campaign.newValue.doneIds.length) || 0} chats remembered in this campaign`;
+});
+
+// ---------- your inbox link ----------
+function showInboxMsg(text, kind) {
+  const el = $("inboxMsg");
+  const id = settings.inboxUrl ? assetIdOf(settings.inboxUrl) : null;
+  el.textContent = text || (settings.inboxUrl ? (id ? `Saved. Only runs on this Page (id ${id}).` : "Saved.") : "");
+  el.className = "hint " + (kind || (settings.inboxUrl ? "good" : ""));
+}
+$("inboxUrl").addEventListener("change", () => {
+  const c = checkInboxUrl($("inboxUrl").value);
+  if (!c.ok) { showInboxMsg(c.message, "bad"); return; }
+  settings.inboxUrl = c.url;
+  $("inboxUrl").value = c.url;
+  saveSettings();
+  showInboxMsg();
+});
+$("openInbox").addEventListener("click", async () => {
+  const c = checkInboxUrl($("inboxUrl").value);
+  if (!c.ok) { showInboxMsg(c.message, "bad"); return; }
+  if (c.url !== settings.inboxUrl) { settings.inboxUrl = c.url; saveSettings(); showInboxMsg(); }
+  await openInbox(c.url);
+  setState("offline", "Opening your inbox…");
+  watchConnection();
 });
 
 // ---------- buttons ----------
@@ -287,4 +313,5 @@ $("newCampaign").addEventListener("click", () => ask("Start a new campaign? The 
   const r = await send("ping");
   if (r.ok && r.state !== "idle") setState(r.state, r.last && r.last.reason, r.last && r.last.current);
   else if (!r.ok) { setState("offline", r.message); watchConnection(); }
+  else setState("idle", "Connected. Write your message, then press Start.");
 })();

@@ -25,7 +25,32 @@ ENGINE_KEYS = [
     "fallbackName", "blockedTexts", "excludeNames", "stopTexts", "order", "onlyIfLastFromMe",
     "moveSentToDone", "testMode", "stepDelayMs", "betweenChatsSec", "dailyCap", "imageRequired",
 ]
+def asset_id(url):
+    """The Facebook Page id in a Business Suite link (asset_id=…), or None."""
+    from urllib.parse import parse_qs, urlparse
+    try:
+        return (parse_qs(urlparse(url).query).get("asset_id") or [None])[0]
+    except ValueError:
+        return None
+
+
+def check_inbox_url(text):
+    """A pasted inbox link -> (cleaned link or "", error message or "")."""
+    from urllib.parse import urlparse
+    t = (text or "").strip()
+    if not t:
+        return "", ""
+    u = urlparse(t)
+    if u.scheme not in ("http", "https") or not u.netloc:
+        return "", "That isn't a web link. Copy it from Chrome's address bar while your inbox is open."
+    host = u.netloc.lower()
+    if not (host == "business.facebook.com" or (host == "www.facebook.com" and u.path.startswith("/latest"))):
+        return "", "That link isn't Business Suite. It should start with https://business.facebook.com/latest/inbox"
+    return t, ""
+
+
 DEFAULT_SETTINGS = {
+    "inboxUrl": "",
     "template": "Hi {first_name}! Just following up po 😊",
     "image_path": "",
     "fallbackName": "there",
@@ -196,8 +221,11 @@ class Controller:
     async def _open(self, url=INBOX_URL, channel="chrome", headless=False, viewport=None, setup=None):
         from playwright.async_api import async_playwright
         if self.ctx:
-            page = await self._inbox_page()
+            page = self.page or (self.ctx.pages[0] if self.ctx.pages else await self.ctx.new_page())
+            if url and asset_id(url) and asset_id(page.url) != asset_id(url):
+                await page.goto(url)
             await page.bring_to_front()
+            self._emit("browser", "open")
             return "already open"
         self.pw = await async_playwright().start()
         profile = self.store.dir / "chrome-profile"
@@ -287,6 +315,10 @@ class Controller:
         page = await self._inbox_page()
         if "/inbox" not in page.url:
             raise RuntimeError("Open the Inbox in Business Suite first.")
+        saved, here = asset_id(self.store.settings.get("inboxUrl", "")), asset_id(page.url)
+        if saved and here and saved != here:
+            raise RuntimeError(f"The open inbox is a different Facebook Page (id {here}) than your saved link (id {saved}). "
+                               "Press “Open Chrome” to go to your saved inbox.")
         if not self.store.settings.get("template", "").strip():
             raise RuntimeError("Write your follow-up message first.")
         self.done_ids = set(self.store.campaign["doneIds"])

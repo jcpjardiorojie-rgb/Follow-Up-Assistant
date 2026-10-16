@@ -144,3 +144,42 @@ def test_connects_by_itself_without_reloading_the_tab(pw):
             assert sw.evaluate("handleCommand('toggle-scroll')")["ok"]
         finally:
             ctx.close()
+
+
+def test_inbox_link_opens_my_page_and_blocks_other_pages(ext):
+    inbox, panel, sw = ext
+    assert panel.inner_text("#pill") == "Ready"
+    panel.fill("#tplText", "Hi {first_name}!")
+    panel.fill("#inboxUrl", "facebook dot com")
+    panel.dispatch_event("#inboxUrl", "change")
+    assert "isn't a web link" in panel.inner_text("#inboxMsg")
+    mine = "https://business.facebook.com/latest/inbox/all/?nav_ref=manage_page_ap_plus_inbox_message_button&asset_id=999&business_id="
+    panel.fill("#inboxUrl", mine)
+    panel.dispatch_event("#inboxUrl", "change")
+    assert "id 999" in panel.inner_text("#inboxMsg")
+    panel.screenshot(path=str(SHOTS / "option-a-inbox-link.png"), clip={"x": 0, "y": 0, "width": 380, "height": 300})
+
+    # The open tab is Page 1, the saved link is Page 999: Start refuses
+    panel.click("#start")
+    panel.wait_for_selector("#reason:has-text('different Facebook Page')")
+    assert inbox.evaluate("__mock.sent.length") == 0
+
+    # "Open my inbox" opens the saved Page; then Start works there
+    with panel.context.expect_page() as new_tab:
+        panel.click("#openInbox")
+    mine_tab = new_tab.value
+    opened = sw.evaluate("chrome.tabs.query({}).then((ts) => ts.map((t) => t.pendingUrl || t.url))")
+    assert mine in opened  # Chrome opened exactly the saved link
+    # The test browser can't serve the practice inbox to a tab the extension opened itself,
+    # so load it again (a real browser just shows your inbox).
+    mine_tab.goto(mine)
+    mine_tab.wait_for_function("window.__mock && document.querySelectorAll('.row').length > 5")
+    panel.wait_for_selector("#pill.idle", timeout=15_000)
+    panel.click("#settingsBox summary")
+    panel.fill("#sCap", "1")
+    panel.dispatch_event("#sCap", "change")
+    panel.fill("#sStep", "0.3")
+    panel.dispatch_event("#sStep", "change")
+    panel.click("#start")
+    panel.wait_for_selector("#pill.finished", timeout=60_000)
+    assert mine_tab.evaluate("__mock.sent.length") == 1 and inbox.evaluate("__mock.sent.length") == 0

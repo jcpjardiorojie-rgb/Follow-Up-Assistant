@@ -104,3 +104,18 @@ def test_desktop_scroll_inbox_pause_resume(app):
     assert "paused" in states and states[-1] == "done"
     done = [d for k, d in events if k == "scroll"][-1]
     assert done["reachedEnd"] and done["rows"] == 22
+
+
+def test_inbox_link_rules(app):
+    from bridge import asset_id, check_inbox_url
+    link = "https://business.facebook.com/latest/inbox/all/?nav_ref=manage_page_ap_plus_inbox_message_button&asset_id=101270579420124&business_id="
+    assert check_inbox_url(link) == (link, "") and asset_id(link) == "101270579420124"
+    assert check_inbox_url("  ") == ("", "")
+    assert "isn't Business Suite" in check_inbox_url("https://example.com/inbox")[1]
+    assert "isn't a web link" in check_inbox_url("my inbox")[1]
+    # Start refuses when the open inbox is another Page than the saved link
+    c, store, _ = app
+    store.settings["inboxUrl"] = link
+    with pytest.raises(RuntimeError, match="different Facebook Page"):
+        c.start().result(10)
+    assert page_eval(c, "__mock.sent.length") == 0

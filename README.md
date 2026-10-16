@@ -59,6 +59,9 @@ Safety rules built into both versions:
 4. Click **Load unpacked** and choose the **`extension`** folder.
 5. Pin the extension (puzzle icon → pin **FollowUp Copilot**).
 6. Open Business Suite → **Inbox** and click the extension icon. The side panel opens and connects by itself.
+7. (Optional) Paste your inbox link from Chrome's address bar into **Your inbox link**. Then
+   **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
+   by mistake. The badge at the top says **Ready** when it's connected.
 
 ## Option B: install the Windows app
 
@@ -67,6 +70,7 @@ Safety rules built into both versions:
 3. In the `desktop` folder, double-click **`install.bat`** (one time only).
 4. Double-click **`run.bat`** to start FollowUp Desk.
 5. Press **1 Open Chrome**. The first time, log in to Facebook in that Chrome window. It remembers you after that.
+6. (Optional) Paste your inbox link under **Message → Your inbox link**. **Open Chrome** then goes straight to it.
 
 (Optional) `build_exe.bat` makes a single `FollowUpDesk.exe`.
 

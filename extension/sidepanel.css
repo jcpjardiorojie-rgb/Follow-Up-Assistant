@@ -87,3 +87,8 @@ details[open] > summary h2::before { content: "▾ "; }
 .keys td { padding: 4px 0; border-bottom: 1px solid var(--line); }
 .keys td:first-child { width: 42%; }
 .keys kbd { font: 600 12px/1 Consolas, monospace; background: var(--bg); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 3px 6px; white-space: nowrap; }
+.inboxrow { display: flex; gap: 6px; }
+.inboxrow input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--surface); }
+.pill.idle { background: var(--good-soft); color: var(--good); }
+#inboxMsg.bad { color: var(--bad); }
+#inboxMsg.good { color: var(--good); }

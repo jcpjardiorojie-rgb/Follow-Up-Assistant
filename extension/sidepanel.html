@@ -12,8 +12,17 @@
     <h1>FollowUp Copilot</h1>
     <div id="where" class="sub">Looking for your Business Suite tab…</div>
   </div>
-  <span id="pill" class="pill idle">Idle</span>
+  <span id="pill" class="pill idle">Ready</span>
 </header>
+
+<section class="card">
+  <label for="inboxUrl" class="hint">Your inbox link (optional): paste it from Chrome's address bar</label>
+  <div class="inboxrow">
+    <input id="inboxUrl" type="url" placeholder="https://business.facebook.com/latest/inbox/all/?asset_id=…" spellcheck="false">
+    <button id="openInbox">Open my inbox</button>
+  </div>
+  <div id="inboxMsg" class="hint"></div>
+</section>
 
 <section class="card run">
   <div id="reason" class="reason">Press Start when your Inbox is open.</div>
