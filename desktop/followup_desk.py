@@ -171,12 +171,12 @@ class App:
         self.v_between = tk.DoubleVar(value=self.s["betweenChatsSec"])
         self.v_step = tk.DoubleVar(value=self.s["stepDelayMs"] / 1000)
         self.v_cap = tk.IntVar(value=self.s["dailyCap"])
-        self.v_order = tk.StringVar(value="Top of the list (newest)" if self.s["order"] == "top" else "Bottom of the list (oldest loaded)")
+        self.v_order = tk.StringVar(value="Top (newest first)" if self.s["order"] == "top" else "Bottom (scrolls down first, then goes up)")
         fields = [("Seconds between chats", ttk.Spinbox(g, from_=0, to=600, increment=1, textvariable=self.v_between, width=8)),
                   ("Wait after opening a chat (sec)", ttk.Spinbox(g, from_=0.3, to=20, increment=0.1, textvariable=self.v_step, width=8)),
                   ("Daily limit", ttk.Spinbox(g, from_=1, to=100000, increment=50, textvariable=self.v_cap, width=8)),
-                  ("Start from", ttk.Combobox(g, textvariable=self.v_order, state="readonly", width=28,
-                                              values=["Top of the list (newest)", "Bottom of the list (oldest loaded)"]))]
+                  ("Start from", ttk.Combobox(g, textvariable=self.v_order, state="readonly", width=38,
+                                              values=["Top (newest first)", "Bottom (scrolls down first, then goes up)"]))]
         for i, (label, w) in enumerate(fields):
             ttk.Label(g, text=label, style="Card.TLabel").grid(row=i, column=0, sticky="w", pady=2)
             w.grid(row=i, column=1, sticky="w", padx=8, pady=2)

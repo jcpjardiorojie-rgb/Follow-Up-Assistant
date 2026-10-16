@@ -141,6 +141,28 @@ def test_tools_scroll_and_diagnose(page):
     assert s["ok"] and page.evaluate("(m => m.scrollTop + m.clientHeight >= m.scrollHeight - 8)(document.querySelector('#msgs'))")
 
 
-def test_bottom_order_starts_from_oldest_loaded(page):
-    run(page, order="bottom", dailyCap=1)
-    assert mock(page)["sent"][0]["name"] == "Sinman Blome"  # last of the 12 loaded rows
+def test_bottom_order_scrolls_down_first_then_goes_up(page):
+    res = run(page, order="bottom", dailyCap=3)
+    m = mock(page)
+    # Only 12 of 22 chats were loaded at the start; it scrolled to the very bottom first.
+    reasons = [s.get("reason", "") for s in res["states"]]
+    assert any("Scrolling to the bottom" in r for r in reasons)
+    assert "Reached the bottom of the inbox. Sending from the bottom up." in reasons
+    # Then it worked upward: the last chat first; "Julie Lucas" (can't message) moved to Done on the way.
+    assert [s["name"] for s in m["sent"]] == ["Evah August Iamu", "Joshua Gerua", "Alois Mabep"]
+    names = {i: n for i, n, _ in m["names"]}
+    assert [names[i] for i in m["done"]] == ["Julie Lucas"]
+
+
+def test_bottom_order_on_a_long_inbox_that_only_draws_visible_rows(page):
+    page.goto("https://business.facebook.com/latest/inbox/all/?extra=40")
+    page.evaluate(__import__("conftest").ENGINE_JS)
+    page.evaluate("__mock.flags.virtual = true")
+    res = run(page, order="bottom", onlyIfLastFromMe=False, dailyCap=1000, maxWaitMs=400000)
+    m = mock(page)
+    assert res["state"] == "finished" and res["states"][-1]["reason"] == "Reached the top of the inbox"
+    sent = [s["name"] for s in m["sent"]]
+    assert sent[:2] == ["Lead Number 40", "Lead Number 39"]
+    assert len(sent) == len(set(s["id"] for s in m["sent"]))
+    # Everyone who can be messaged got exactly one message (62 chats - 3 can't message - 2 Facebook user)
+    assert len(sent) == 57 and sent[-1] == "Born Twi Struggle"  # top-most chat that can be messaged

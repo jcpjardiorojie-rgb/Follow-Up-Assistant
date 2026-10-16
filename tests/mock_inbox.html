@@ -83,6 +83,8 @@
     ["Joshua Gerua", {}],
     ["Evah August Iamu", {}],
   ];
+  const extra = Number(new URLSearchParams(location.search).get("extra") || 0);
+  for (let i = 0; i < extra; i++) base.push(["Lead Number " + (i + 1), {}]);
   const convs = base.map(([name, o], i) => ({
     id: String(100087247013200 + i), name, blocked: !!o.blocked, noImg: !!o.noImg,
     color: colors[i % colors.length],
@@ -95,9 +97,20 @@
   const rowsEl = $("#rows");
 
   function visible() { return convs.filter((c) => !c.done).slice(0, mock.loaded); }
+  // flags.virtual: like long real inboxes, only the rows near the screen exist in the page.
+  function windowed() {
+    const all = visible();
+    if (!mock.flags.virtual) return { rows: all, before: 0, after: 0 };
+    const l = $("#list"), H = 64, top = Math.max(0, l.scrollTop - rowsEl.offsetTop);
+    const first = Math.max(0, Math.floor(top / H) - 2), last = Math.min(all.length, first + Math.ceil(l.clientHeight / H) + 4);
+    return { rows: all.slice(first, last), before: first * H, after: (all.length - last) * H };
+  }
+  function spacer(h) { const d = document.createElement("div"); d.style.height = h + "px"; return d; }
   function renderList() {
+    const w = windowed();
     rowsEl.innerHTML = "";
-    for (const c of visible()) {
+    rowsEl.appendChild(spacer(w.before));
+    for (const c of w.rows) {
       const last = c.msgs[c.msgs.length - 1];
       const r = document.createElement("div");
       r.className = "row" + (last.me ? "" : " unread") + (mock.selected === c ? " sel" : "");
@@ -111,9 +124,11 @@
       r.querySelector(".preview").textContent = (last.me ? "You: " : "") + last.text;
       rowsEl.appendChild(r);
     }
+    rowsEl.appendChild(spacer(w.after));
   }
   $("#list").addEventListener("scroll", () => {
     const l = $("#list");
+    if (mock.flags.virtual) renderList();
     if (l.scrollTop + l.clientHeight >= l.scrollHeight - 5 && mock.loaded < convs.length && !mock.loading) {
       mock.loading = true;
       setTimeout(() => { mock.loaded += 6; mock.loading = false; renderList(); }, 400);

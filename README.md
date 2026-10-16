@@ -82,8 +82,11 @@ Safety rules built into both versions:
 4. Turn Test mode off, set the **Daily limit to about 20**, and press **Start** for a real run.
 5. When that works, raise the limit.
 
-**Scroll inbox to the bottom** loads older chats (months back) before you start.
-**Start from: Bottom of the list** then works oldest-first.
+**To send from the bottom of the inbox going up:** in Settings choose **Start from: Bottom**.
+When you press Start, the app first scrolls the inbox all the way down until no older chats load
+(you'll see "Scrolling to the bottom of the inbox first… (N chats)"). Then it messages the bottom chat
+first and works upward to the top. Chats you message jump to the top of Business Suite's list, and the
+app remembers them, so they're never messaged twice. Stop and Pause work while it scrolls.
 
 ### Settings, in plain words
 
@@ -92,7 +95,7 @@ Safety rules built into both versions:
 | Seconds between chats | Pause after each sent message |
 | Wait after opening a chat | Time for the chat to load before reading it. Raise it if your internet is slow. |
 | Daily limit | Stops after this many sends today |
-| Start from | Top of the list (newest) or bottom (oldest loaded) |
+| Start from | **Top**: newest first. **Bottom**: scrolls down to the oldest chat automatically, then goes up |
 | Only follow up when the last message is mine | Skips people who replied to you, so you can answer them personally |
 | Move chats to Done after sending | Also moves successfully messaged chats to Done |
 | Don't send if the image fails to attach | Skips that chat instead of sending text only |
@@ -124,7 +127,7 @@ Safety rules built into both versions:
 ```
 extension/        Option A: Manifest V3 extension (engine.js, content.js, side panel)
 desktop/          Option B: tkinter window (followup_desk.py) + Playwright controller (bridge.py)
-tests/            practice inbox + 14 automated tests (engine, extension, desktop controller, desktop window)
+tests/            practice inbox + 15 automated tests (engine, extension, desktop controller, desktop window)
 ```
 
 Run the tests (Python 3.10+):

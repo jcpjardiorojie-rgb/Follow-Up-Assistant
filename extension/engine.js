@@ -45,7 +45,8 @@
     youPrefixes: ["You:", "You sent", "You replied", "You unsent"],
 
     // Behaviour
-    order: "top", // "top" (newest first) or "bottom" (oldest loaded first)
+    order: "top", // "top" (newest first) or "bottom" (scroll to the very bottom first, then work upward)
+    loadAllMaxMinutes: 30, // longest time spent scrolling to the bottom before starting
     onlyIfLastFromMe: true, // skip chats where the customer wrote last
     moveSentToDone: false,
     testMode: false, // prepare everything but never press Send / Done
@@ -320,9 +321,16 @@
     target.dispatchEvent(new MouseEvent("mouseup", o));
     target.dispatchEvent(new MouseEvent("click", o));
   }
+  function onScreen(el) {
+    const r = rect(el);
+    return r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth;
+  }
   async function click(el, hooks) {
-    el.scrollIntoView({ block: "center", inline: "nearest" });
-    await sleep(120);
+    if (!onScreen(el)) {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+      await sleep(120);
+    }
+    if (!el.isConnected) throw new Error("STALE"); // the list redrew while scrolling
     const { x, y } = center(el);
     if (hooks.native && hooks.native.click) return hooks.native.click(x, y);
     const target = document.elementFromPoint(x, y);
@@ -488,12 +496,21 @@
     // Open the chat and make sure it really is this person
     const prevId = threadId();
     const alreadyOpen = headerHasName(row.name, list);
-    if (!row.el.isConnected) {
+    // Long inboxes only draw the rows on screen and redraw them while scrolling,
+    // so bring the row into view first, then look it up again before clicking.
+    let clicked = false;
+    for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
+      if (row.el.isConnected && !onScreen(row.el)) {
+        row.el.scrollIntoView({ block: "center", inline: "nearest" });
+        await sleep(300);
+      }
       const fresh = getRows(list, cfg).find((r) => r.key === row.key);
       if (!fresh) return out("SKIPPED", "Chat left the list before it could be opened");
       row = fresh;
+      try { await click(nameElementIn(row), hooks); clicked = true; }
+      catch (e) { if (e.message !== "STALE") throw e; }
     }
-    await click(nameElementIn(row), hooks);
+    if (!clicked) return out("REVIEW", "Couldn't click this chat in the list — nothing sent");
     const opened = await waitFor(() => headerHasName(row.name, list) && (alreadyOpen || threadId() === null || threadId() !== prevId), cfg.pageTimeoutMs);
     if (!opened) return out("REVIEW", "Couldn't confirm the open chat is this person — nothing sent");
     await sleep(cfg.stepDelayMs);
@@ -618,6 +635,7 @@
       let failures = 0, emptyLoads = 0;
       this.setState("running");
       try {
+        if (cfg.order === "bottom") await this.scrollToBottomFirst();
         for (;;) {
           await this.gate();
           if ((await hooks.sentToday()) >= cfg.dailyCap) { this.setState("finished", `Daily limit of ${cfg.dailyCap} reached`); return; }
@@ -629,6 +647,13 @@
           let rows = getRows(list, cfg).filter((r) => !visited.has(r.key));
           if (cfg.order === "bottom") rows.reverse();
           if (!rows.length) {
+            // Bottom-up: everything is loaded already, so look further UP (needed when the
+            // page only draws the rows on screen). Top-down: load older chats below.
+            if (cfg.order === "bottom") {
+              if (await scrollUp(list)) continue;
+              this.setState("finished", "Reached the top of the inbox");
+              return;
+            }
             if (await loadMore(list, cfg)) { emptyLoads = 0; continue; }
             if (++emptyLoads >= 3) { this.setState("finished", "No more conversations in this view"); return; }
             continue;
@@ -664,6 +689,33 @@
         this.setState("stopped", "Error: " + (e && e.message ? e.message : e));
       }
     }
+    // Keeps scrolling the inbox down until no older chats load. Pause/Stop work during it.
+    async scrollToBottomFirst() {
+      const { cfg, hooks } = this;
+      const end = Date.now() + cfg.loadAllMaxMinutes * 60000;
+      let still = 0;
+      while (still < 3) {
+        await this.gate();
+        const list = findList(cfg);
+        if (!list) { this.pause("Can't find the inbox list. Open Business Suite → Inbox, then press Resume."); continue; }
+        const grew = await loadMore(list, cfg);
+        still = grew ? 0 : still + 1;
+        const n = getRows(list, cfg).length;
+        await hooks.state({ state: "running", reason: `Scrolling to the bottom of the inbox first… (${n} chats on screen)`, current: "" });
+        if (Date.now() > end) {
+          await hooks.state({ state: "running", reason: `Scrolled for ${cfg.loadAllMaxMinutes} minutes without reaching the bottom; starting from the lowest chat loaded.` });
+          return;
+        }
+      }
+      await hooks.state({ state: "running", reason: "Reached the bottom of the inbox. Sending from the bottom up." });
+    }
+  }
+
+  async function scrollUp(list) {
+    if (list.scrollTop <= 0) return false;
+    list.scrollTop = Math.max(0, list.scrollTop - list.clientHeight * 0.8);
+    await sleep(700);
+    return true;
   }
 
   async function loadMore(list, cfg) {
