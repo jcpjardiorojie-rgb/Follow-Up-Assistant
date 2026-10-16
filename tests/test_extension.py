@@ -25,12 +25,12 @@ def ext(pw):
         panel.set_viewport_size({"width": 380, "height": 1100})
         panel.goto(f"chrome-extension://{ext_id}/sidepanel.html")
         panel.wait_for_selector("#where:has-text('Connected')")
-        yield inbox, panel
+        yield inbox, panel, sw
         ctx.close()
 
 
 def test_extension_runs_a_campaign(ext):
-    inbox, panel = ext
+    inbox, panel, _ = ext
     panel.fill("#tplText", "Hi {first_name}! Just following up po 😊")
     panel.set_input_files("#imgFile", str(TINY_PNG))
     panel.wait_for_selector("#imgRemove:not([hidden])")
@@ -64,3 +64,51 @@ def test_extension_runs_a_campaign(ext):
     panel.wait_for_selector("#pill.finished", timeout=120_000)
     again = inbox.evaluate("__mock.sent")
     assert len(again) == 8 and len({s["id"] for s in again}) == 8
+
+
+def test_scroll_button_pauses_and_shortcuts_work(ext):
+    inbox, panel, sw = ext
+    keys = panel.inner_text("#keys")
+    assert "Start / Pause / Resume" in keys and "Scroll inbox" in keys
+
+    # Scroll inbox to the bottom → Pause scrolling → Resume scrolling → done
+    panel.click("#tLoad")
+    panel.wait_for_selector("#tLoad:has-text('Pause scrolling')")
+    inbox.wait_for_function("__mock.loaded > 12")
+    panel.click("#tLoad")
+    panel.wait_for_selector("#tLoad:has-text('Resume scrolling')")
+    assert panel.is_disabled("#start")
+    SHOTS.mkdir(parents=True, exist_ok=True)
+    panel.locator("section.card").nth(2).screenshot(path=str(SHOTS / "option-a-scroll-paused.png"))
+    panel.locator("section.card").nth(3).screenshot(path=str(SHOTS / "option-a-shortcuts.png"))
+    held = inbox.evaluate("__mock.loaded")
+    inbox.wait_for_timeout(2000)
+    assert inbox.evaluate("__mock.loaded") == held
+    panel.click("#tLoad")
+    panel.wait_for_selector("#tLoad:has-text('Scroll inbox to the bottom')", timeout=60_000)
+    assert "Reached the bottom" in panel.inner_text("#toolOut") and "(22 chats" in panel.inner_text("#toolOut")
+
+    # Keyboard shortcuts (sent the same way Chrome sends them)
+    panel.fill("#tplText", "Hi {first_name}!")
+    panel.click("#settingsBox summary")
+    panel.fill("#sBetween", "2")
+    panel.dispatch_event("#sBetween", "change")
+    panel.fill("#sStep", "0.3")
+    panel.dispatch_event("#sStep", "change")
+    shortcut = lambda name: sw.evaluate(f"handleCommand('{name}')")
+    assert shortcut("toggle-run")["message"] == "Started"
+    inbox.wait_for_function("__mock.sent.length >= 1", timeout=30_000)
+    assert shortcut("toggle-run")["message"] == "Paused"
+    panel.wait_for_selector("#pill.paused")
+    assert "FollowUp: Paused" in inbox.inner_text("#fu-toast")
+    n = inbox.evaluate("__mock.sent.length")
+    inbox.wait_for_timeout(4000)
+    assert inbox.evaluate("__mock.sent.length") <= n + 1  # at most the chat already in progress
+    assert shortcut("toggle-run")["message"] == "Resumed"
+    panel.wait_for_selector("#pill.running")
+    assert shortcut("stop")["message"] == "Stopped"
+    panel.wait_for_selector("#pill.stopped", timeout=30_000)
+    assert shortcut("scroll-latest")["ok"] in (True, False)  # answers even with no chat open
+    assert shortcut("toggle-scroll")["ok"]
+    panel.wait_for_selector("#tLoad:has-text('Pause scrolling'), #tLoad:has-text('Scroll inbox to the bottom')")
+    assert shortcut("stop")["message"] in ("Scrolling stopped", "Nothing to stop")

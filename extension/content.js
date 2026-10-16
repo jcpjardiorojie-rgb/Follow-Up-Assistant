@@ -80,6 +80,51 @@
     }
   }
 
+  // Small note at the bottom of the page, so a keyboard shortcut shows it worked.
+  function toast(text) {
+    let el = document.getElementById("fu-toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "fu-toast";
+      el.style.cssText = "position:fixed;right:20px;bottom:20px;z-index:2147483647;background:#0e6b58;color:#fff;" +
+        "font:600 14px/1.3 'Segoe UI',system-ui,sans-serif;padding:10px 16px;border-radius:8px;" +
+        "box-shadow:0 6px 24px rgba(0,0,0,.3);pointer-events:none;transition:opacity .3s";
+      document.documentElement.appendChild(el);
+    }
+    el.textContent = "FollowUp: " + text;
+    el.style.opacity = "1";
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => { el.style.opacity = "0"; }, 2500);
+  }
+
+  // "Scroll inbox to the bottom": runs in the background; progress goes to the side panel.
+  async function startScroll() {
+    if (["running", "paused"].includes(E.status())) return { ok: false, message: "Stop the sending run first." };
+    const s = (await load()).settings;
+    if (!E.tools.diagnose(s).inboxList) return { ok: false, message: "Can't find the inbox list. Open Business Suite → Inbox." };
+    E.tools.loadWholeInbox(s, (p) => tell({ scroll: p }));
+    return { ok: true, message: "Scrolling the inbox down…" };
+  }
+  async function toggleRun() {
+    const st = E.status();
+    if (st === "running") { E.pause(); return { ok: true, message: "Paused" }; }
+    if (st === "paused") { E.resume(); return { ok: true, message: "Resumed" }; }
+    const r = await start();
+    return r.ok ? { ok: true, message: "Started" } : r;
+  }
+  async function toggleScroll() {
+    const st = E.tools.scrollState();
+    if (st === "running") { E.tools.pauseScroll(); return { ok: true, message: "Scrolling paused" }; }
+    if (st === "paused") { E.tools.resumeScroll(); return { ok: true, message: "Scrolling resumed" }; }
+    return startScroll();
+  }
+  function stopAll() {
+    const was = E.status(), scrolling = E.tools.scrollState() !== "idle";
+    E.stop();
+    return { ok: true, message: scrolling ? "Scrolling stopped" : ["running", "paused"].includes(was) ? "Stopped" : "Nothing to stop" };
+  }
+  const withToast = (fn) => async () => { const r = await fn(); toast(r.message || (r.ok ? "Done" : "Didn't work")); return r; };
+
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (!msg || msg.to !== "content") return;
     (async () => {
@@ -89,10 +134,16 @@
         case "pause": E.pause(); return { ok: true };
         case "resume": E.resume(); return { ok: true };
         case "stop": E.stop(); return { ok: true };
-        case "loadInbox": {
-          const s = (await load()).settings;
-          return E.tools.loadWholeInbox(s, (n) => tell({ progress: `Loaded ${n} chats…` }));
-        }
+        case "loadInbox": return startScroll();
+        case "pauseScroll": return { ok: E.tools.pauseScroll() };
+        case "resumeScroll": return { ok: E.tools.resumeScroll() };
+        case "stopScroll": return { ok: E.tools.stopScroll() };
+        case "scrollState": return { ok: true, state: E.tools.scrollState() };
+        // keyboard shortcuts
+        case "toggleRun": return withToast(toggleRun)();
+        case "toggleScroll": return withToast(toggleScroll)();
+        case "stopAll": return withToast(async () => stopAll())();
+        case "scrollLatestShortcut": return withToast(async () => E.tools.scrollChatToLatest((await load()).settings))();
         case "scrollLatest": return E.tools.scrollChatToLatest((await load()).settings);
         case "diagnose": return { ok: true, report: E.tools.diagnose((await load()).settings) };
         default: return { ok: false, message: "Unknown command" };

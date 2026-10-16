@@ -3,17 +3,68 @@
   "name": "FollowUp Copilot",
   "description": "Sends your follow-up message to each chat in Meta Business Suite and moves chats you can't message to Done.",
   "version": "1.0.0",
-  "permissions": ["storage", "unlimitedStorage", "sidePanel"],
-  "host_permissions": ["https://business.facebook.com/*"],
-  "background": { "service_worker": "background.js" },
-  "side_panel": { "default_path": "sidepanel.html" },
-  "action": { "default_title": "Open FollowUp Copilot", "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png" } },
-  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://business.facebook.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open FollowUp Copilot",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "content_scripts": [
     {
-      "matches": ["https://business.facebook.com/*"],
-      "js": ["engine.js", "content.js"],
+      "matches": [
+        "https://business.facebook.com/*"
+      ],
+      "js": [
+        "engine.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "commands": {
+    "toggle-run": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+1"
+      },
+      "description": "Start / Pause / Resume sending"
+    },
+    "stop": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+2"
+      },
+      "description": "Stop (sending or scrolling)"
+    },
+    "toggle-scroll": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+3"
+      },
+      "description": "Scroll inbox to bottom / Pause / Resume"
+    },
+    "scroll-latest": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+4"
+      },
+      "description": "Scroll chat to latest"
+    }
+  }
 }

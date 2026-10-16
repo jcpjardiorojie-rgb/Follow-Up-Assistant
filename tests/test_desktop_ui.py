@@ -43,3 +43,64 @@ def test_window_start_button_runs_campaign(tmp_path):
     finally:
         app.ctl.close()
         root.destroy()
+
+
+def test_window_shortcuts_toggle_run_and_scroll(tmp_path):
+    import followup_desk as fd
+    from bridge import Store
+
+    store = Store(tmp_path)
+    store.settings.update({"stepDelayMs": 300, "betweenChatsSec": 2, "template": "Hi {first_name}!"})
+    root = tk.Tk()
+    app = fd.App(root, store)
+
+    def pump(until, seconds=60):
+        end = time.time() + seconds
+        while time.time() < end:
+            root.update()
+            if until():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def press(action):
+        app.events.put(("hotkey", action))  # what a shortcut (or a mouse button set to it) sends
+
+    try:
+        # The shortcut boxes show the defaults, and a bad one is reported instead of used
+        assert app.v_keys["toggle_run"].get() == "Ctrl+Shift+1"
+        app.v_keys["scroll_latest"].set("q")
+        app._apply_hotkeys(quiet=True)
+        assert "Not used" in app.keys_msg.cget("text") or "unavailable" in app.keys_msg.cget("text")
+        app.v_keys["scroll_latest"].set("ctrl+shift+4")
+        app._apply_hotkeys(quiet=True)
+        assert store.settings["hotkeys"]["scroll_latest"] == "Ctrl+Shift+4"
+
+        app.ctl.open_browser(url=INBOX_URL, channel=None, headless=True,
+                             viewport={"width": 1400, "height": 900}, setup=serve).result(60)
+        time.sleep(1)
+        # Scroll: start → pause → resume → finishes
+        press("toggle_scroll")
+        assert pump(lambda: app.scroll == "running")
+        assert app.b_load.cget("text") == "Pause scrolling"
+        press("toggle_scroll")
+        assert pump(lambda: app.scroll == "paused")
+        assert app.b_load.cget("text") == "Resume scrolling"
+        press("toggle_scroll")
+        assert pump(lambda: app.scroll == "idle", 60)
+        assert "Reached the bottom" in app.reason.cget("text")
+        # Sending: start → pause → resume → stop, all from shortcuts
+        press("toggle_run")
+        assert pump(lambda: app.state == "running")
+        sent = lambda: app.ctl.submit(app.ctl.page.evaluate("__mock.sent.length")).result(10)
+        assert pump(lambda: sent() >= 1)
+        press("toggle_run")
+        assert pump(lambda: app.state == "paused")
+        press("toggle_run")
+        assert pump(lambda: app.state == "running")
+        press("stop")
+        assert pump(lambda: app.state == "stopped", 30)
+    finally:
+        app.hk.stop()
+        app.ctl.close()
+        root.destroy()

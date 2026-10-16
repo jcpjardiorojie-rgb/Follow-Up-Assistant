@@ -81,3 +81,9 @@ details[open] > summary h2::before { content: "▾ "; }
 .confirm[hidden] { display: none; }
 .confirm .controls { grid-template-columns: 1fr 1fr; }
 @media (max-width: 330px) { .tools, .grid { grid-template-columns: 1fr; } .counts { grid-template-columns: 1fr 1fr; } }
+.scrollbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: var(--warn-soft); border-radius: 7px; padding: 6px 8px; }
+.scrollbar[hidden] { display: none; }
+.keys { border-collapse: collapse; width: 100%; }
+.keys td { padding: 4px 0; border-bottom: 1px solid var(--line); }
+.keys td:first-child { width: 42%; }
+.keys kbd { font: 600 12px/1 Consolas, monospace; background: var(--bg); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 3px 6px; white-space: nowrap; }

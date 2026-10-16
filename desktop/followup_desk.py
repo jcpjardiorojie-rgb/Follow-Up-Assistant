@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from bridge import DEFAULT_SETTINGS, Controller, Store
+from hotkeys import Hotkeys, describe
 
 C = {"bg": "#f4f6f4", "surface": "#ffffff", "line": "#d3dad5", "fg": "#18211d", "muted": "#56635c",
      "accent": "#0e6b58", "accent_soft": "#d6ede6", "good": "#1f7a3e", "good_soft": "#ddf1e3",
@@ -42,7 +43,9 @@ class App:
         self.events = queue.Queue()
         self.ctl = Controller(self.store, lambda kind, data: self.events.put((kind, data)))
         self.state = "idle"
+        self.scroll = "idle"  # the "Scroll inbox to bottom" job: idle / running / paused
         self.thumb = None
+        self.hk = Hotkeys(lambda action: self.events.put(("hotkey", action)))
         root.title("FollowUp Desk")
         root.geometry("1180x720")
         root.minsize(1000, 640)
@@ -51,6 +54,7 @@ class App:
         self._build()
         self._load_log()
         self._set_state({"state": "idle", "reason": "Step 1: press “Open Chrome” and log in to Business Suite (first time only)."})
+        self._apply_hotkeys(quiet=True)
         root.protocol("WM_DELETE_WINDOW", self._quit)
         root.after(150, self._poll)
 
@@ -188,8 +192,25 @@ class App:
                                  (self.v_sdone, "Move chats to Done after sending", "Card.TCheckbutton"),
                                  (self.v_imgreq, "Don't send if the image fails to attach", "Card.TCheckbutton"),
                                  (self.v_test, "Test mode: fill the message box, but never press Send or Done", "Test.TCheckbutton")]:
-            ttk.Checkbutton(card, text=text, variable=var, style=style).pack(anchor="w", pady=3)
+            ttk.Checkbutton(card, text=text, variable=var, style=style).pack(anchor="w", pady=2)
         ttk.Button(card, text="Advanced: words the app looks for…", command=self._advanced).pack(anchor="w", pady=(6, 0))
+
+        ttk.Separator(card).pack(fill="x", pady=(10, 6))
+        head = ttk.Frame(card, style="Card.TFrame")
+        head.pack(fill="x")
+        ttk.Label(head, text="Keyboard shortcuts", style="H.TLabel").pack(side="left")
+        ttk.Button(head, text="Apply shortcuts", command=self._apply_hotkeys).pack(side="right")
+        self.keys_msg = ttk.Label(card, text="", style="Muted.TLabel", wraplength=560)
+        self.keys_msg.pack(anchor="w", pady=(0, 4))
+        k = ttk.Frame(card, style="Card.TFrame")
+        k.pack(fill="x")
+        self.v_keys = {}
+        for i, (action, label) in enumerate([("toggle_run", "Start / Pause / Resume"), ("stop", "Stop (sending or scrolling)"),
+                                             ("toggle_scroll", "Scroll inbox: start / pause / resume"), ("scroll_latest", "Scroll chat to latest")]):
+            var = tk.StringVar(value=self.s["hotkeys"].get(action, ""))
+            self.v_keys[action] = var
+            ttk.Entry(k, textvariable=var, width=16).grid(row=i, column=0, sticky="w", pady=2)
+            ttk.Label(k, text=label, style="Card.TLabel").grid(row=i, column=1, sticky="w", padx=8)
 
     def _build_activity(self, parent):
         counts = ttk.Frame(parent)
@@ -342,14 +363,75 @@ class App:
         self._call(self.ctl.resume() if self.state == "paused" else self.ctl.pause(), label="pause")
 
     def _stop(self):
-        self._call(self.ctl.stop(), label="stop")
+        if self.scroll in ("running", "paused"):
+            self._call(self.ctl.stop_scroll(), label="stop")
+        else:
+            self._call(self.ctl.stop(), label="stop")
 
     def _check(self):
         self._call(self.ctl.diagnose(), done=self._show_report, label="check")
 
     def _load_inbox(self):
-        self.reason.config(text="Scrolling the inbox to the bottom… (this can take a few minutes for months of chats)")
-        self._call(self.ctl.load_inbox(), done=lambda r: self.reason.config(text=f"{r['message']} — {r.get('rows', 0)} chats loaded."), label="load")
+        """One button: start scrolling, then Pause / Resume."""
+        if self.scroll == "running":
+            self._call(self.ctl.pause_scroll(), label="load")
+        elif self.scroll == "paused":
+            self._call(self.ctl.resume_scroll(), label="load")
+        else:
+            self.reason.config(text="Scrolling the inbox to the bottom… (this can take a few minutes for months of chats)")
+            self._call(self.ctl.load_inbox(), label="load")
+
+    def _show_scroll(self, p):
+        self.scroll = "idle" if p["state"] in ("done", "idle") else p["state"]
+        msg = p.get("message") or ""
+        if p["state"] == "done":
+            msg = f"{msg} — {p.get('rows', 0)} chats on screen."
+        self.reason.config(text=msg)
+        self._refresh_buttons()
+
+    # ---------- keyboard shortcuts ----------
+    def _apply_hotkeys(self, quiet=False):
+        if hasattr(self, "v_keys"):
+            self.s["hotkeys"] = {a: v.get().strip() for a, v in self.v_keys.items()}
+        errors = self.hk.set(self.s["hotkeys"])
+        for action, var in getattr(self, "v_keys", {}).items():
+            if action not in errors and var.get().strip():
+                var.set(describe(var.get()))
+                self.s["hotkeys"][action] = var.get()
+        self.store.save_settings()
+        if not self.hk.start():
+            text = self.hk.error
+        elif errors:
+            text = "Not used: " + "; ".join(errors.values())
+        else:
+            text = "On in every window. Set your mouse buttons to press these keys."
+        if hasattr(self, "keys_msg"):
+            self.keys_msg.config(text=text)
+        if not quiet and errors:
+            messagebox.showwarning("Keyboard shortcuts", text)
+
+    def _hotkey(self, action):
+        if action == "toggle_run":
+            if self.scroll in ("running", "paused"):
+                self._note("Scrolling is still going. Stop it first (Stop shortcut).")
+            elif self.state == "running":
+                self._pause()
+            elif self.state == "paused":
+                self._pause()  # resumes
+            else:
+                self._start()
+        elif action == "stop":
+            self._stop()
+        elif action == "toggle_scroll":
+            if self.state in ("running", "paused"):
+                self._note("Stop the sending run before scrolling the inbox.")
+            else:
+                self._load_inbox()
+        elif action == "scroll_latest":
+            self._latest()
+
+    def _note(self, text):
+        self.reason.config(text=text)
 
     def _latest(self):
         self._call(self.ctl.scroll_latest(), done=lambda r: self.reason.config(text=r["message"]), label="latest")
@@ -382,6 +464,7 @@ class App:
     def _quit(self):
         if self.state in ("running", "paused") and not messagebox.askyesno("Quit", "A run is in progress. Stop it and quit?"):
             return
+        self.hk.stop()
         self._read_settings_quietly()
         self.ctl.close()
         self.root.destroy()
@@ -403,6 +486,10 @@ class App:
                     self._add_log(data)
                 elif kind == "stats":
                     self._show_stats(data)
+                elif kind == "scroll":
+                    self._show_scroll(data)
+                elif kind == "hotkey":
+                    self._hotkey(data)
                 elif kind == "browser":
                     if data == "open":
                         self.reason.config(text="Chrome is open. Log in if asked, go to Inbox, then press Start. Tip: try Test mode first.")
@@ -430,13 +517,20 @@ class App:
             self.current.config(text="Now: " + st["current"])
         elif s != "running":
             self.current.config(text="")
+        self._refresh_buttons()
+
+    def _refresh_buttons(self):
         busy = self.state in ("running", "paused")
-        self.b_start.state(["disabled"] if busy else ["!disabled"])
+        scrolling = self.scroll in ("running", "paused")
+        self.b_start.state(["disabled"] if busy or scrolling else ["!disabled"])
         self.b_pause.state(["!disabled"] if busy else ["disabled"])
-        self.b_stop.state(["!disabled"] if busy else ["disabled"])
+        self.b_stop.state(["!disabled"] if busy or scrolling else ["disabled"])
         self.b_pause.config(text="Resume" if self.state == "paused" else "Pause")
-        for b in (self.b_load, self.b_latest, self.b_check):
-            b.state(["disabled"] if busy else ["!disabled"])
+        self.b_load.config(text={"running": "Pause scrolling", "paused": "Resume scrolling"}.get(self.scroll, "Scroll inbox to bottom"),
+                           style="Primary.TButton" if scrolling else "TButton")
+        self.b_load.state(["disabled"] if busy else ["!disabled"])
+        for b in (self.b_latest, self.b_check):
+            b.state(["disabled"] if busy or scrolling else ["!disabled"])
 
     def _add_log(self, e):
         t = (e.get("time") or "")[11:19]

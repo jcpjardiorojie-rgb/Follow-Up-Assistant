@@ -44,6 +44,7 @@ DEFAULT_SETTINGS = {
     "stepDelayMs": 1200,
     "betweenChatsSec": 8,
     "dailyCap": 300,
+    "hotkeys": {"toggle_run": "Ctrl+Shift+1", "stop": "Ctrl+Shift+2", "toggle_scroll": "Ctrl+Shift+3", "scroll_latest": "Ctrl+Shift+4"},
 }
 COUNTER = {"SENT": "sent", "EXCLUDED": "excluded", "SKIPPED": "skipped", "FAILED": "failed",
            "REVIEW": "failed", "UNKNOWN": "unknown", "TEST": "test"}
@@ -163,7 +164,17 @@ class Controller:
         return self.submit(self._tool("cfg => FollowUpEngine.tools.diagnose(cfg)"))
 
     def load_inbox(self):
-        return self.submit(self._tool("cfg => FollowUpEngine.tools.loadWholeInbox(cfg, null, 300)"))
+        """Starts scrolling the inbox down in the background; progress arrives as "scroll" events."""
+        return self.submit(self._start_scroll())
+
+    def pause_scroll(self):
+        return self.submit(self._eval("FollowUpEngine.tools.pauseScroll()"))
+
+    def resume_scroll(self):
+        return self.submit(self._eval("FollowUpEngine.tools.resumeScroll()"))
+
+    def stop_scroll(self):
+        return self.submit(self._eval("FollowUpEngine.tools.stopScroll()"))
 
     def scroll_latest(self):
         return self.submit(self._tool("cfg => FollowUpEngine.tools.scrollChatToLatest(cfg)"))
@@ -260,6 +271,18 @@ class Controller:
         page = await self._inbox_page()
         return await page.evaluate(js, self.engine_config())
 
+    async def _start_scroll(self):
+        page = await self._inbox_page()
+        if await page.evaluate("FollowUpEngine.tools.scrollState()") != "idle":
+            raise RuntimeError("Already scrolling.")
+        if self.state.get("state") in ("running", "paused"):
+            raise RuntimeError("Stop the sending run first.")
+        cfg = {k: self.store.settings[k] for k in ENGINE_KEYS}
+        if not (await page.evaluate("cfg => FollowUpEngine.tools.diagnose(cfg)", cfg))["inboxList"]:
+            raise RuntimeError("Can't find the inbox list. Open Business Suite → Inbox.")
+        await page.evaluate("cfg => { FollowUpEngine.tools.loadWholeInbox(cfg, (p) => window.fuHook('scroll', p)); return true; }", cfg)
+        return "scrolling"
+
     async def _start(self):
         page = await self._inbox_page()
         if "/inbox" not in page.url:
@@ -294,6 +317,9 @@ class Controller:
                 self.store.bump(key)
             self._emit("log", payload)
             self._emit("stats", self.store.stats())
+            return None
+        if name == "scroll":
+            self._emit("scroll", payload)
             return None
         if name == "state":
             self.state = payload

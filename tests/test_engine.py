@@ -166,3 +166,32 @@ def test_bottom_order_on_a_long_inbox_that_only_draws_visible_rows(page):
     assert len(sent) == len(set(s["id"] for s in m["sent"]))
     # Everyone who can be messaged got exactly one message (62 chats - 3 can't message - 2 Facebook user)
     assert len(sent) == 57 and sent[-1] == "Born Twi Struggle"  # top-most chat that can be messaged
+
+
+def test_scroll_inbox_button_can_pause_resume_and_stop(page):
+    page.evaluate("""() => { window.__p = []; FollowUpEngine.tools.loadWholeInbox({}, (p) => __p.push(p)).then((r) => { window.__scrollDone = r; }); }""")
+    page.wait_for_function("__mock.loaded > 12")  # it scrolled once
+    assert page.evaluate("FollowUpEngine.tools.pauseScroll()")
+    page.wait_for_function("FollowUpEngine.tools.scrollState() === 'paused'")
+    held = page.evaluate("__mock.loaded")
+    page.wait_for_timeout(2500)
+    assert page.evaluate("__mock.loaded") == held  # nothing loads while paused
+    # a sending run can't start while scrolling is active
+    assert "Scrolling the inbox is still going" in page.evaluate(
+        "() => { try { FollowUpEngine.start({}, {}); return ''; } catch (e) { return e.message; } }")
+    assert page.evaluate("FollowUpEngine.tools.resumeScroll()")
+    page.wait_for_function("window.__scrollDone", timeout=60000)
+    r = page.evaluate("__scrollDone")
+    assert r["reachedEnd"] and r["rows"] == 22
+    states = page.evaluate("__p.map(p => p.state)")
+    assert "paused" in states and states[-1] == "done"
+
+    page.evaluate("() => { __mock.loaded = 12; delete window.__scrollDone; }")
+    page.reload()
+    page.evaluate(__import__("conftest").ENGINE_JS)
+    page.evaluate("() => { FollowUpEngine.tools.loadWholeInbox({}, null).then((r) => { window.__scrollDone = r; }); }")
+    page.wait_for_timeout(300)
+    assert page.evaluate("FollowUpEngine.tools.stopScroll()")
+    page.wait_for_function("window.__scrollDone", timeout=10000)
+    assert page.evaluate("__scrollDone.message") == "Scrolling stopped"
+    assert page.evaluate("FollowUpEngine.tools.scrollState()") == "idle"

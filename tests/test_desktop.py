@@ -80,3 +80,27 @@ def test_desktop_stop_button(app):
     st = wait_until_done(c, 10)
     assert st["state"] == "stopped"
     assert page_eval(c, "__mock.sent.length") == 1
+
+
+def test_desktop_scroll_inbox_pause_resume(app):
+    c, store, events = app
+    page_eval(c, "new Promise(r => setTimeout(r, 500))")
+    c.load_inbox().result(10)
+    end = time.time() + 20
+    while page_eval(c, "__mock.loaded") <= 12 and time.time() < end:
+        time.sleep(0.2)
+    assert c.pause_scroll().result(10)
+    time.sleep(0.8)
+    held = page_eval(c, "__mock.loaded")
+    time.sleep(2)
+    assert page_eval(c, "__mock.loaded") == held
+    with pytest.raises(RuntimeError):
+        c.load_inbox().result(10)  # already scrolling (paused)
+    assert c.resume_scroll().result(10)
+    end = time.time() + 60
+    while not any(k == "scroll" and d["state"] == "done" for k, d in events) and time.time() < end:
+        time.sleep(0.2)
+    states = [d["state"] for k, d in events if k == "scroll"]
+    assert "paused" in states and states[-1] == "done"
+    done = [d for k, d in events if k == "scroll"][-1]
+    assert done["reachedEnd"] and done["rows"] == 22

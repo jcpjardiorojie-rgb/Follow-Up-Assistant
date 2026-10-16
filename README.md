@@ -88,6 +88,35 @@ When you press Start, the app first scrolls the inbox all the way down until no 
 first and works upward to the top. Chats you message jump to the top of Business Suite's list, and the
 app remembers them, so they're never messaged twice. Stop and Pause work while it scrolls.
 
+**Scroll inbox to the bottom** (the separate button) can also be paused: press it once to start, again to
+**Pause scrolling**, again to **Resume scrolling**. **Stop** ends it.
+
+![Scroll paused](docs/screenshots/option-a-scroll-paused.png)
+
+### Keyboard shortcuts (and mouse buttons)
+
+| Keys | What it does |
+|---|---|
+| **Ctrl+Shift+1** | Start sending → Pause → Resume (one key does all three) |
+| **Ctrl+Shift+2** | Stop (sending, or scrolling) |
+| **Ctrl+Shift+3** | Scroll inbox to the bottom → Pause → Resume |
+| **Ctrl+Shift+4** | Scroll the open chat to the latest message |
+
+**To use mouse buttons:** in your mouse software (Logitech G HUB, Razer Synapse, Bloody, A4Tech and so on),
+set a button to press one of these key combinations, the same way you set up your current macro. It's best
+to set it on a button that isn't "Back", because Chrome also uses Back to leave the page.
+
+* **Option A (extension):** the keys work while Chrome is the active window. To make them work **from any
+  window**, click **Change keys** in the side panel (or open `chrome://extensions/shortcuts`) and switch
+  each one from "In Chrome" to **Global**. You can also pick different keys there. A small green note
+  appears at the bottom of the Business Suite page each time a shortcut is used.
+* **Option B (desktop app):** the keys work from **any window** already. Change them under
+  **Settings → Keyboard shortcuts** (type e.g. `Ctrl+Alt+S` or `F8`), then press **Apply shortcuts**.
+
+If you install both versions, give them different keys so one key press doesn't control both.
+
+![Option A shortcuts](docs/screenshots/option-a-shortcuts.png)
+
 ### Settings, in plain words
 
 | Setting | What it does |
@@ -126,14 +155,14 @@ app remembers them, so they're never messaged twice. Stop and Pause work while i
 
 ```
 extension/        Option A: Manifest V3 extension (engine.js, content.js, side panel)
-desktop/          Option B: tkinter window (followup_desk.py) + Playwright controller (bridge.py)
-tests/            practice inbox + 15 automated tests (engine, extension, desktop controller, desktop window)
+desktop/          Option B: tkinter window (followup_desk.py), Playwright controller (bridge.py), shortcuts (hotkeys.py)
+tests/            practice inbox + 22 automated tests (engine, extension, desktop controller, desktop window, shortcuts)
 ```
 
 Run the tests (Python 3.10+):
 
 ```
-pip install playwright==1.56.0 pytest pillow
+pip install playwright==1.56.0 pytest pillow pynput
 python -m playwright install chromium
 python -m pytest tests            # on Linux, run the window test with: xvfb-run python -m pytest tests
 ```

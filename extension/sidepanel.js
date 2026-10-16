@@ -11,7 +11,7 @@ const DEF = {
   stepDelayMs: 1200, betweenChatsSec: 8, dailyCap: 300,
 };
 const BAD = new Set(["FAILED", "REVIEW", "UNKNOWN"]);
-let settings = {}, template = {}, tabId = null, state = "idle";
+let settings = {}, template = {}, tabId = null, state = "idle", scrollState = "idle";
 
 // ---------- storage ----------
 async function loadAll() {
@@ -133,11 +133,11 @@ function setState(s, reason, current) {
   $("pill").className = "pill " + s;
   if (reason !== undefined) $("reason").textContent = reason || (s === "running" ? "Working through your inbox…" : "");
   if (current !== undefined) $("current").textContent = current ? "Now: " + current : "";
-  $("start").disabled = s === "running" || s === "paused";
+  $("start").disabled = s === "running" || s === "paused" || scrollState === "running" || scrollState === "paused";
   $("pause").disabled = !(s === "running" || s === "paused");
   $("pause").textContent = s === "paused" ? "Resume" : "Pause";
   $("stop").disabled = !(s === "running" || s === "paused");
-  for (const id of ["tLoad", "tLatest", "tCheck"]) $(id).disabled = s === "running";
+  for (const id of ["tLoad", "tLatest", "tCheck"]) $(id).disabled = s === "running" || s === "paused";
 }
 
 function showStats(st) {
@@ -175,6 +175,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     while (ol.children.length > 200) ol.lastElementChild.remove();
   }
   if (msg.progress) { $("toolOut").hidden = false; $("toolOut").textContent = msg.progress; }
+  if (msg.scroll) showScroll(msg.scroll);
 });
 chrome.storage.onChanged.addListener((ch) => {
   if (ch.campaign) $("remembered").textContent = `${(ch.campaign.newValue && ch.campaign.newValue.doneIds.length) || 0} chats remembered in this campaign`;
@@ -211,7 +212,43 @@ async function tool(cmd, busy) {
     out.textContent = r.message || (r.ok ? "Done" : "Didn't work");
   }
 }
-$("tLoad").addEventListener("click", () => tool("loadInbox", "Scrolling the inbox to the bottom…"));
+// "Scroll inbox to the bottom": Start → Pause → Resume, with its own Stop.
+
+function showScroll(p) {
+  scrollState = p.state === "done" ? "idle" : p.state;
+  const active = scrollState === "running" || scrollState === "paused";
+  $("tLoad").textContent = scrollState === "running" ? "Pause scrolling" : scrollState === "paused" ? "Resume scrolling" : "Scroll inbox to the bottom";
+  $("tLoad").classList.toggle("primary", active);
+  $("scrollBar").hidden = !active;
+  if (p.message) $("scrollMsg").textContent = p.message;
+  if (p.state === "done") { $("toolOut").hidden = false; $("toolOut").textContent = `${p.message} (${p.rows} chats on screen)`; }
+  $("start").disabled = active || state === "running" || state === "paused";
+}
+$("tLoad").addEventListener("click", async () => {
+  const cmd = scrollState === "running" ? "pauseScroll" : scrollState === "paused" ? "resumeScroll" : "loadInbox";
+  const r = await send(cmd);
+  if (cmd === "loadInbox" && !r.ok) { $("toolOut").hidden = false; $("toolOut").textContent = r.message; }
+});
+$("tLoadStop").addEventListener("click", () => send("stopScroll"));
+
+// Keyboard shortcuts, as currently set in Chrome
+const KEY_LABELS = { "toggle-run": "Start / Pause / Resume", stop: "Stop", "toggle-scroll": "Scroll inbox: start / pause / resume", "scroll-latest": "Scroll chat to latest" };
+async function showKeys() {
+  const cmds = await chrome.commands.getAll();
+  const order = Object.keys(KEY_LABELS);
+  const rows = cmds.filter((c) => KEY_LABELS[c.name]).sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name)).map((c) => {
+    const tr = document.createElement("tr");
+    const k = document.createElement("td"), d = document.createElement("td");
+    const kbd = document.createElement("kbd");
+    kbd.textContent = c.shortcut || "not set";
+    k.append(kbd); d.textContent = KEY_LABELS[c.name];
+    tr.append(k, d);
+    return tr;
+  });
+  $("keys").replaceChildren(...rows);
+}
+$("kChange").addEventListener("click", () => chrome.tabs.create({ url: "chrome://extensions/shortcuts" }));
+window.addEventListener("focus", showKeys);
 $("tLatest").addEventListener("click", () => tool("scrollLatest", "Scrolling…"));
 $("tCheck").addEventListener("click", () => tool("diagnose", "Checking…"));
 
@@ -242,6 +279,9 @@ $("newCampaign").addEventListener("click", () => ask("Start a new campaign? The 
 (async () => {
   await loadAll();
   setState("idle");
+  showKeys();
+  const sc = await send("scrollState");
+  if (sc.ok && sc.state !== "idle") showScroll({ state: sc.state, message: sc.state === "paused" ? "Scrolling paused" : "Scrolling the inbox down…" });
   const r = await send("ping");
   if (r.ok && r.state !== "idle") setState(r.state, r.last && r.last.reason, r.last && r.last.current);
   else if (!r.ok) setState("offline", r.message);

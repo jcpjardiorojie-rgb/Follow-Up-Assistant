@@ -725,20 +725,51 @@
   }
 
   // ---------- tools for the buttons ----------
-  async function loadWholeInbox(cfg, onProgress, maxSeconds = 300) {
+  // "Scroll inbox to the bottom" button. Runs in the background and can be paused,
+  // resumed and stopped; progress goes to onProgress({ state, rows, message }).
+  const scrollJob = { state: "idle", paused: false, cancel: false, rows: 0 };
+  async function loadWholeInbox(cfg, onProgress, maxSeconds) {
     cfg = Object.assign({}, DEFAULTS, cfg || {});
-    const list = findList(cfg);
-    if (!list) return { ok: false, message: "Can't find the inbox list" };
-    const end = Date.now() + maxSeconds * 1000;
-    let still = 0;
-    while (still < 3 && Date.now() < end && !loadWholeInbox.cancel) {
-      const grew = await loadMore(list, cfg);
-      still = grew ? 0 : still + 1;
-      if (onProgress) onProgress(getRows(list, cfg).length);
+    if (scrollJob.state !== "idle") return { ok: false, message: "Already scrolling" };
+    const report = (state, message) => {
+      scrollJob.state = state;
+      if (onProgress) try { onProgress({ state, rows: scrollJob.rows, message }); } catch (_) {}
+    };
+    Object.assign(scrollJob, { paused: false, cancel: false, rows: 0 });
+    report("running", "Scrolling the inbox down…");
+    let end = Date.now() + (maxSeconds || cfg.loadAllMaxMinutes * 60) * 1000;
+    let still = 0, result;
+    try {
+      for (;;) {
+        if (scrollJob.paused && !scrollJob.cancel) {
+          report("paused", `Scrolling paused (${scrollJob.rows} chats on screen)`);
+          const t0 = Date.now();
+          while (scrollJob.paused && !scrollJob.cancel) await sleep(200);
+          end += Date.now() - t0; // paused time doesn't count toward the time limit
+          if (!scrollJob.cancel) report("running", "Scrolling the inbox down…");
+        }
+        if (scrollJob.cancel) { result = { ok: true, reachedEnd: false, message: "Scrolling stopped" }; break; }
+        if (still >= 3) { result = { ok: true, reachedEnd: true, message: "Reached the bottom of the inbox" }; break; }
+        if (Date.now() > end) { result = { ok: true, reachedEnd: false, message: "Stopped before the bottom (time limit)" }; break; }
+        const list = findList(cfg);
+        if (!list) { result = { ok: false, reachedEnd: false, message: "Can't find the inbox list" }; break; }
+        const grew = await loadMore(list, cfg);
+        still = grew ? 0 : still + 1;
+        scrollJob.rows = getRows(list, cfg).length;
+        if (!scrollJob.paused && !scrollJob.cancel) report("running", `Scrolling the inbox down… (${scrollJob.rows} chats on screen)`);
+      }
+    } catch (e) {
+      result = { ok: false, reachedEnd: false, message: "Error: " + (e && e.message ? e.message : e) };
     }
-    loadWholeInbox.cancel = false;
-    return { ok: true, rows: getRows(list, cfg).length, reachedEnd: still >= 3, message: still >= 3 ? "Reached the bottom of the inbox" : "Stopped before the bottom" };
+    result.rows = scrollJob.rows;
+    report("idle", result.message);
+    if (onProgress) try { onProgress({ state: "done", rows: result.rows, message: result.message, reachedEnd: result.reachedEnd }); } catch (_) {}
+    return result;
   }
+  function pauseScroll() { if (scrollJob.state === "running") { scrollJob.paused = true; return true; } return false; }
+  function resumeScroll() { if (scrollJob.state === "paused" || scrollJob.paused) { scrollJob.paused = false; return true; } return false; }
+  function stopScroll() { if (scrollJob.state !== "idle") { scrollJob.cancel = true; scrollJob.paused = false; return true; } return false; }
+  function scrollState() { return scrollJob.state; }
   async function scrollChatToLatest(cfg) {
     cfg = Object.assign({}, DEFAULTS, cfg || {});
     const list = findList(cfg);
@@ -797,15 +828,16 @@
     current: null,
     start(config, hooks) {
       if (api.current && !["stopped", "finished"].includes(api.current.state)) throw new Error("Already running");
+      if (scrollJob.state !== "idle") throw new Error("Scrolling the inbox is still going. Stop it or wait for it to finish first.");
       api.current = new Runner(config, hooks);
       return api.current;
     },
     startWithBridge(config) { api.start(config, bridgeHooks()); return true; },
     pause() { api.current && api.current.pause("Paused"); },
     resume() { api.current && api.current.resume(); },
-    stop() { api.current && api.current.stop(); loadWholeInbox.cancel = true; },
+    stop() { api.current && api.current.stop(); stopScroll(); },
     status() { return api.current ? api.current.state : "idle"; },
-    tools: { loadWholeInbox, scrollChatToLatest, diagnose },
+    tools: { loadWholeInbox, pauseScroll, resumeScroll, stopScroll, scrollState, scrollChatToLatest, diagnose },
   };
   root.FollowUpEngine = api;
 })(typeof window !== "undefined" ? window : globalThis);
