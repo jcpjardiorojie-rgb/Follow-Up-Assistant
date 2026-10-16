@@ -112,3 +112,35 @@ def test_scroll_button_pauses_and_shortcuts_work(ext):
     assert shortcut("toggle-scroll")["ok"]
     panel.wait_for_selector("#tLoad:has-text('Pause scrolling'), #tLoad:has-text('Scroll inbox to the bottom')")
     assert shortcut("stop")["message"] in ("Scrolling stopped", "Nothing to stop")
+
+
+def test_connects_by_itself_without_reloading_the_tab(pw):
+    """The 'Not connected' case: the panel was opened first, and the inbox tab never got the
+    extension loaded into it (www.facebook.com/latest has no automatic loading)."""
+    with tempfile.TemporaryDirectory() as profile:
+        ctx = pw.chromium.launch_persistent_context(
+            profile, channel="chromium", headless=True, viewport={"width": 1400, "height": 900},
+            args=[f"--disable-extensions-except={EXT}", f"--load-extension={EXT}"])
+        try:
+            from conftest import MOCK_HTML
+            ctx.route("https://www.facebook.com/latest/**", lambda r: r.fulfill(
+                status=200, content_type="text/html; charset=utf-8", body=MOCK_HTML))
+            sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker")
+            ext_id = sw.url.split("/")[2]
+            panel = ctx.pages[0] if ctx.pages else ctx.new_page()
+            panel.goto(f"chrome-extension://{ext_id}/sidepanel.html")
+            panel.wait_for_selector("#pill.offline")
+            assert "Open Business Suite" in panel.inner_text("#where")
+
+            inbox = ctx.new_page()
+            inbox.goto("https://www.facebook.com/latest/inbox/all/?asset_id=1")
+            inbox.wait_for_function("document.querySelectorAll('.row').length > 5")
+            panel.wait_for_selector("#pill.idle", timeout=15_000)  # reconnected by itself
+            assert "Connected" in panel.inner_text("#where")
+
+            panel.click("#tCheck")
+            panel.wait_for_selector("#toolOut:has-text('Inbox list')")
+            assert "✓ found (12 chats visible)" in panel.inner_text("#toolOut")
+            assert sw.evaluate("handleCommand('toggle-scroll')")["ok"]
+        finally:
+            ctx.close()

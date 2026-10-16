@@ -110,20 +110,22 @@ $("aReset").addEventListener("click", () => {
 });
 
 // ---------- talking to the Business Suite tab ----------
-async function findTab() {
-  const tabs = await chrome.tabs.query({ url: "https://business.facebook.com/*" });
-  const active = tabs.find((t) => t.active) || tabs[0];
-  tabId = active ? active.id : null;
-  $("where").textContent = tabId ? "Connected to your Business Suite tab" : "Open business.facebook.com → Inbox in this window";
-  return tabId;
-}
 async function send(cmd) {
-  if (!(await findTab())) return { ok: false, message: "No Business Suite tab is open." };
-  try {
-    return await chrome.tabs.sendMessage(tabId, { to: "content", cmd });
-  } catch (_) {
-    return { ok: false, message: "Reload the Business Suite tab once (the extension was just installed or updated)." };
-  }
+  const r = await sendToInbox(cmd);
+  tabId = r.tab ? r.tab.id : null;
+  $("where").textContent = r.tab && r.ok !== false ? "Connected to your Business Suite tab" : r.message;
+  return r;
+}
+
+// While not connected, keep checking every few seconds, so opening the inbox is all it takes.
+let reconnectTimer = null;
+function watchConnection() {
+  clearInterval(reconnectTimer);
+  reconnectTimer = setInterval(async () => {
+    if (state !== "offline") { clearInterval(reconnectTimer); return; }
+    const r = await send("ping");
+    if (r.ok) { clearInterval(reconnectTimer); setState(r.state !== "idle" ? r.state : "idle", r.state !== "idle" && r.last ? r.last.reason : "Connected. Press Start when your Inbox is open."); }
+  }, 3000);
 }
 
 function setState(s, reason, current) {
@@ -185,7 +187,7 @@ chrome.storage.onChanged.addListener((ch) => {
 $("start").addEventListener("click", async () => {
   readSettings();
   const r = await send("start");
-  if (!r.ok) { setState("offline", r.message); return; }
+  if (!r.ok) { setState(r.tab ? "idle" : "offline", r.message); if (!r.tab) watchConnection(); return; }
   setState("running", settings.testMode ? "Test mode: nothing will be sent." : "Working through your inbox…");
 });
 $("pause").addEventListener("click", async () => { await send(state === "paused" ? "resume" : "pause"); });
@@ -284,5 +286,5 @@ $("newCampaign").addEventListener("click", () => ask("Start a new campaign? The 
   if (sc.ok && sc.state !== "idle") showScroll({ state: sc.state, message: sc.state === "paused" ? "Scrolling paused" : "Scrolling the inbox down…" });
   const r = await send("ping");
   if (r.ok && r.state !== "idle") setState(r.state, r.last && r.last.reason, r.last && r.last.current);
-  else if (!r.ok) setState("offline", r.message);
+  else if (!r.ok) { setState("offline", r.message); watchConnection(); }
 })();

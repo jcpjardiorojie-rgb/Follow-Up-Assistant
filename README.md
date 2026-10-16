@@ -58,7 +58,7 @@ Safety rules built into both versions:
 3. Turn on **Developer mode** (top right).
 4. Click **Load unpacked** and choose the **`extension`** folder.
 5. Pin the extension (puzzle icon → pin **FollowUp Copilot**).
-6. Open Business Suite → **Inbox**, **reload the tab once**, then click the extension icon. The side panel opens.
+6. Open Business Suite → **Inbox** and click the extension icon. The side panel opens and connects by itself.
 
 ## Option B: install the Windows app
 

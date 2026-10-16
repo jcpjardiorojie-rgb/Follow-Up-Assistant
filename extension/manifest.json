@@ -2,14 +2,16 @@
   "manifest_version": 3,
   "name": "FollowUp Copilot",
   "description": "Sends your follow-up message to each chat in Meta Business Suite and moves chats you can't message to Done.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "permissions": [
     "storage",
     "unlimitedStorage",
-    "sidePanel"
+    "sidePanel",
+    "scripting"
   ],
   "host_permissions": [
-    "https://business.facebook.com/*"
+    "https://business.facebook.com/*",
+    "https://www.facebook.com/latest/*"
   ],
   "background": {
     "service_worker": "background.js"
