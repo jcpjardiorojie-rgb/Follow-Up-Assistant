@@ -242,3 +242,38 @@ def test_screen_order_starts_at_lowest_visible_chat_and_leaves_lower_ones_alone(
     assert first["name"] == names[above[-1]]
     # and it reached the top: every eligible chat above was handled
     assert len([s for s in m["sent"]]) + len(m["done"]) >= len(above) - 3  # 3 skipped (customer wrote last) at most
+
+
+
+def test_reply_sorting():
+    import subprocess, json
+    from conftest import ROOT
+    js = """global.window = globalThis; require(%r); const E = globalThis.FollowUpEngine;
+      console.log(JSON.stringify(%s.map(t => E.classifyReply(t))));""" % (str(ROOT / "extension" / "engine.js"), json.dumps([
+        "Magkano po?", "hm", "Available pa po ba?", "Saan location nyo", "interested ako", "pa send po details",
+        "ok po", "Not interested", "wag na po, salamat", "no", "salamat po"]))
+    out = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+    assert out == ["hot", "hot", "hot", "hot", "warm", "warm", "warm", "cold", "cold", "cold", "replied"]
+
+
+def test_check_replies_finds_buyers_and_labels_hot_leads(page):
+    res = run(page, dailyCap=4)
+    sent = [e for e in res["log"] if e["status"] == "SENT"]
+    assert len(sent) == 4 and all(e["key"] for e in sent)
+    ids = {e["name"]: e["id"] for e in sent}
+    names = list(ids)
+    page.evaluate("([a, b, c]) => { __mock.reply(a, 'Magkano po?'); __mock.reply(b, 'interested ako'); __mock.reply(c, 'Not interested'); }",
+                  [ids[names[0]], ids[names[1]], ids[names[2]]])
+    contacts = [{"key": e["key"], "name": e["name"]} for e in sent]
+    r = page.evaluate("(c) => FollowUpEngine.tools.scanReplies({}, c, null, 200)", contacts)
+    kinds = {x["name"]: x["kind"] for x in r["replies"]}
+    assert kinds == {names[0]: "hot", names[1]: "warm", names[2]: "cold"}
+    assert {x["name"]: x["reply"] for x in r["replies"]}[names[0]] == "Magkano po?"
+    # Label the hot lead in Business Suite
+    hot = [c for c in contacts if c["name"] == names[0]]
+    out = page.evaluate("(c) => FollowUpEngine.tools.labelLeads({ stepDelayMs: 200 }, c, null)", hot)
+    assert out["results"][0]["ok"], out
+    assert page.evaluate("__mock.labeled") == [{"id": ids[names[0]], "label": "Hot lead"}]
+    # A chat that can't be found explains why
+    miss = page.evaluate("FollowUpEngine.tools.labelChat({ pageTimeoutMs: 1500 }, { key: 'x|y', name: 'Nobody Here' })")
+    assert not miss["ok"] and miss["code"] == "CHAT_NOT_FOUND" and miss["help"]["fix"]

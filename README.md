@@ -141,6 +141,33 @@ If you install both versions, give them different keys so one key press doesn't 
 | Test mode | Does everything except pressing Send / Done |
 | Advanced | The exact words it looks for, in case Meta changes them or your Business Suite is in another language |
 
+### Saved messages (extension)
+
+Keep several follow-up messages, each with its own name and image. Use **+ New** to add one and the drop-down
+to choose which one the next run sends. Under each message you see how it did: **Sent**, **Replied (%)** and
+**🔥 Hot**.
+
+![Saved messages](docs/screenshots/option-a-saved-messages.png)
+
+### Buyers tab: who replied and who wants to buy (extension)
+
+Press **Check replies** a few hours or days after a run. The app reads your inbox list (it doesn't open chats)
+and finds the people you followed up who wrote back. It sorts them by what they wrote:
+
+| | Examples of words it looks for |
+|---|---|
+| 🔥 **Hot** | how much, hm, magkano, price, order, COD, available, saan, location, reserve, gcash |
+| 🙂 **Warm** | interested, details, pa send, sige, ok, pwede, pics |
+| ❄️ **Not interested** | not interested, no thanks, wag na, ayoko, stop |
+| **Replied** | anything else |
+
+Change the words under **Settings → Advanced**. Each person has an **Open chat** button. With
+"add this label to hot leads" ticked (the default), hot leads also get the **Hot lead** label in Business
+Suite, so you can find them in the inbox. **Label hot leads** does the same on demand. If a label can't be
+added, the Problems tab says why and how to fix it.
+
+![Buyers tab](docs/screenshots/option-a-buyers-tab.png)
+
 ### When something goes wrong: the Problems tab
 
 Every problem is listed in the **Problems** tab (in both versions) with **what happened**, **why**, and

@@ -210,3 +210,51 @@ def test_problems_tab_explains_what_happened_and_how_to_fix(ext):
     panel.click("#tabMain")
     panel.wait_for_selector("#mainView:not([hidden])")
     panel.click("#stop")
+
+
+def test_saved_messages_buyers_and_hot_lead_label(ext):
+    inbox, panel, _ = ext
+    # Two saved messages; send with the second one
+    panel.fill("#tplText", "Hi {first_name}! First message")
+    panel.click("#tplNew")
+    panel.fill("#tplName", "Promo Oct")
+    panel.fill("#tplText", "Hi {first_name}! Promo ends Friday")
+    assert panel.locator("#tplSelect option").all_inner_texts() == ["Message 1", "Promo Oct"]
+    panel.click("#settingsBox summary")
+    for sel, val in (("#sBetween", "0"), ("#sStep", "0.3"), ("#sCap", "3")):
+        panel.fill(sel, val)
+        panel.dispatch_event(sel, "change")
+    panel.click("#start")
+    panel.wait_for_selector("#pill.finished", timeout=120_000)
+    sent = inbox.evaluate("__mock.sent")
+    assert [s["text"].split("!")[1].strip() for s in sent] == ["Promo ends Friday"] * 3
+    assert "Sent 3" in panel.inner_text("#tplStats")
+
+    # Three people write back
+    inbox.evaluate("""(ids) => { __mock.reply(ids[0], 'Magkano po?'); __mock.reply(ids[1], 'pa send po details');
+                                 __mock.reply(ids[2], 'Not interested'); }""", [s["id"] for s in sent])
+    panel.click("#tabBuyers")
+    assert panel.is_checked("#bAuto") and panel.input_value("#bLabelName") == "Hot lead"
+    panel.click("#bCheck")
+    panel.wait_for_selector("#bStatus:has-text('replies')", timeout=60_000)
+    panel.wait_for_selector("#bCheck:not([disabled])", timeout=90_000)
+    assert "Labeled 1 hot lead" in panel.inner_text("#bStatus"), panel.inner_text("#bStatus")
+    assert [panel.inner_text(s) for s in ("#bHot", "#bWarm", "#bReplied", "#bCold")] == ["1", "1", "0", "1"]
+    assert panel.inner_text("#hotCount") == "1"
+    leads = panel.locator("#leads li")
+    assert leads.count() == 3
+    first = leads.first.inner_text()
+    assert sent[0]["name"] in first and "HOT" in first and "Magkano po?" in first and "Promo Oct" in first
+    assert "Labeled “Hot lead”" in first
+    assert inbox.evaluate("__mock.labeled") == [{"id": sent[0]["id"], "label": "Hot lead"}]
+    panel.screenshot(path=str(SHOTS / "option-a-buyers-tab.png"), clip={"x": 0, "y": 0, "width": 380, "height": 900})
+
+    # Open chat jumps to that person in Business Suite
+    leads.nth(1).locator("button").click()
+    panel.wait_for_selector("#bStatus:has-text('Opened')", timeout=30_000)
+    assert inbox.evaluate("__mock.selected.name") == sent[1]["name"]
+
+    # Per-message numbers on the Main tab
+    panel.click("#tabMain")
+    assert "Replied 3 (100%)" in panel.inner_text("#tplStats") and "Hot 1" in panel.inner_text("#tplStats")
+    panel.locator("section.card").filter(has=panel.locator("#tplSelect")).screenshot(path=str(SHOTS / "option-a-saved-messages.png"))

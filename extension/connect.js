@@ -48,7 +48,7 @@ async function openInbox(url) {
   return chrome.tabs.create({ url: url || DEFAULT_INBOX, active: true });
 }
 
-async function sendToInbox(cmd) {
+async function sendToInbox(cmd, extra) {
   const assetId = await savedAssetId();
   const tab = await findInboxTab(assetId);
   if (!tab) return { ok: false, noTab: true, message: "Open Business Suite → Inbox in Chrome (or press “Open my inbox”). The panel connects by itself." };
@@ -56,7 +56,7 @@ async function sendToInbox(cmd) {
   if (START_CMDS.includes(cmd) && assetId && tabAsset && tabAsset !== assetId) {
     return { ok: false, tab, wrongPage: true, message: `The open inbox is a different Facebook Page (id ${tabAsset}) than your saved link (id ${assetId}). Press “Open my inbox” first.` };
   }
-  const msg = { to: "content", cmd };
+  const msg = Object.assign({ to: "content", cmd }, extra || {});
   try {
     return Object.assign({ tab }, await chrome.tabs.sendMessage(tab.id, msg));
   } catch (_) {

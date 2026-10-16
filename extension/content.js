@@ -13,7 +13,7 @@
   let lastState = { state: "idle", reason: "" };
 
   async function load() {
-    const d = await chrome.storage.local.get(["settings", "template", "campaign", "stats", "log", "problems"]);
+    const d = await chrome.storage.local.get(["settings", "template", "templates", "activeTemplate", "campaign", "stats", "log", "problems", "contacts"]);
     const stats = d.stats && d.stats.date === today() ? d.stats : freshStats();
     return {
       settings: Object.assign({}, E.DEFAULTS, d.settings || {}),
@@ -22,6 +22,9 @@
       stats,
       log: d.log || [],
       problems: d.problems || [],
+      contacts: d.contacts || {},
+      tpl: (d.templates || []).find((t) => t.id === d.activeTemplate) || (d.templates || [])[0] ||
+        Object.assign({ id: "t1", name: "Message 1" }, d.template || { text: E.DEFAULTS.template }),
     };
   }
   function save(now) {
@@ -30,7 +33,7 @@
       if (!data) return;
       if (data.log.length > LOG_MAX) data.log = data.log.slice(-LOG_MAX);
       if (data.problems.length > 300) data.problems = data.problems.slice(-300);
-      chrome.storage.local.set({ campaign: data.campaign, stats: data.stats, log: data.log, problems: data.problems });
+      chrome.storage.local.set({ campaign: data.campaign, stats: data.stats, log: data.log, problems: data.problems, contacts: data.contacts });
     };
     if (now) write(); else saveTimer = setTimeout(write, 400);
   }
@@ -50,6 +53,12 @@
         const k = COUNTER[e.status];
         if (k && k !== "sent") data.stats[k]++;
         data.log.push({ time: e.time, name: e.name, status: e.status, reason: e.reason });
+        if (e.status === "SENT" && e.key) {
+          // Remember who got which message, so replies can be matched to it later (Buyers tab).
+          const old = data.contacts[e.key] || {};
+          data.contacts[e.key] = Object.assign(old, { key: e.key, name: e.name, id: e.id, templateId: data.tpl.id,
+            templateName: data.tpl.name, sentAt: e.time, reply: null, kind: null, replyAt: null });
+        }
         if (e.help) data.problems.push({ time: e.time, name: e.name, status: e.status, reason: e.reason, code: e.code, help: e.help });
         save();
         tell({ entry: e, stats: data.stats });
@@ -69,7 +78,7 @@
   async function start() {
     if (!location.pathname.includes("/inbox")) return { ok: false, message: "Open the Inbox in Business Suite first." };
     data = await load();
-    const t = data.template;
+    const t = data.tpl;
     if (!t.text || !t.text.trim()) return { ok: false, message: "Write your follow-up message first." };
     const cfg = Object.assign({}, data.settings, {
       template: t.text,
@@ -128,6 +137,85 @@
   }
   const withToast = (fn) => async () => { const r = await fn(); toast(r.message || (r.ok ? "Done" : "Didn't work")); return r; };
 
+  // ---------- Buyers: who replied, how interested they are, and the hot-lead label ----------
+  let buyersBusy = false;
+  const busyNow = () => ["running", "paused"].includes(E.status()) || E.tools.scrollState() !== "idle";
+  const getContacts = async () => {
+    const d = await chrome.storage.local.get(["contacts", "problems"]);
+    return { contacts: d.contacts || {}, problems: d.problems || [] };
+  };
+  const buyersTell = (state, message) => tell({ buyers: { state, message } });
+
+  async function labelHot(s) {
+    let { contacts, problems } = await getContacts();
+    const todo = Object.values(contacts).filter((c) => c.kind === "hot" && !c.labeled);
+    if (!todo.length) return "No new hot leads to label.";
+    buyersTell("labeling", `Adding “${s.labelName}” to ${todo.length} hot lead(s)…`);
+    const r = await E.tools.labelLeads(s, todo.map((c) => ({ key: c.key, name: c.name })),
+      (p) => buyersTell("labeling", `Adding “${s.labelName}”… ${p.done} of ${p.total}`));
+    ({ contacts, problems } = await getContacts());
+    let ok = 0, bad = 0;
+    for (const x of r.results) {
+      const c = contacts[x.key];
+      if (!c) continue;
+      if (x.ok) { c.labeled = true; c.labelError = ""; ok++; continue; }
+      bad++;
+      c.labelError = x.why || (x.help && x.help.what) || "Couldn't add the label";
+      problems.push({ time: new Date().toISOString(), name: c.name, status: "FAILED", reason: "Label: " + c.labelError, code: x.code, help: x.help });
+    }
+    await chrome.storage.local.set({ contacts, problems: problems.slice(-300) });
+    return `Labeled ${ok} hot lead(s)` + (bad ? `; ${bad} couldn't be labeled (see the Problems tab).` : ".");
+  }
+
+  async function checkReplies() {
+    if (busyNow()) return { ok: false, message: "Stop the sending run (or the inbox scrolling) first." };
+    if (buyersBusy) return { ok: false, message: "Already working on it." };
+    const s = (await load()).settings;
+    const all = Object.values((await getContacts()).contacts);
+    if (!all.length) return { ok: false, message: "Nobody has been messaged from this browser yet, so there are no replies to check." };
+    buyersBusy = true;
+    (async () => {
+      try {
+        buyersTell("checking", "Checking replies… reading your inbox list");
+        const r = await E.tools.scanReplies(s, all.map((c) => ({ key: c.key, name: c.name })),
+          (p) => buyersTell("checking", `Checking replies… ${p.rows} chats read, ${p.replies} replies found`), s.replyScanMax || 600);
+        if (!r.ok) { buyersTell("done", r.message); return; }
+        const { contacts } = await getContacts();
+        const now = new Date().toISOString();
+        let fresh = 0;
+        for (const x of r.replies) {
+          const c = contacts[x.key];
+          if (!c || c.reply === x.reply) continue;
+          Object.assign(c, { reply: x.reply, kind: x.kind, replyAt: now });
+          fresh++;
+        }
+        await chrome.storage.local.set({ contacts });
+        let msg = `Read ${r.rows} chats: ${r.replies.length} replies (${fresh} new).`;
+        if (s.autoLabel) msg += " " + (await labelHot(s));
+        buyersTell("done", msg);
+        toast("Replies checked");
+      } catch (e) {
+        buyersTell("done", "Error: " + (e && e.message || e));
+      } finally {
+        buyersBusy = false;
+      }
+    })();
+    return { ok: true, message: "Checking replies…" };
+  }
+
+  async function labelHotCmd() {
+    if (busyNow()) return { ok: false, message: "Stop the sending run (or the inbox scrolling) first." };
+    if (buyersBusy) return { ok: false, message: "Already working on it." };
+    const s = (await load()).settings;
+    buyersBusy = true;
+    (async () => {
+      try { buyersTell("done", await labelHot(s)); }
+      catch (e) { buyersTell("done", "Error: " + (e && e.message || e)); }
+      finally { buyersBusy = false; }
+    })();
+    return { ok: true, message: "Labeling hot leads…" };
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (!msg || msg.to !== "content") return;
     (async () => {
@@ -142,6 +230,14 @@
         case "resumeScroll": return { ok: E.tools.resumeScroll() };
         case "stopScroll": return { ok: E.tools.stopScroll() };
         case "scrollState": return { ok: true, state: E.tools.scrollState() };
+        case "checkReplies": return checkReplies();
+        case "labelHot": return labelHotCmd();
+        case "stopBuyers": E.stop(); return { ok: true };
+        case "buyersState": return { ok: true, busy: buyersBusy };
+        case "openChat": {
+          const r = await E.tools.openChat((await load()).settings, msg.key, msg.name);
+          return { ok: r.ok, message: r.ok ? "Opened" : r.help.what + " " + r.help.fix };
+        }
         // keyboard shortcuts
         case "toggleRun": return withToast(toggleRun)();
         case "toggleScroll": return withToast(toggleScroll)();

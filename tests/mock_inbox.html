@@ -53,7 +53,7 @@
     <div id="list"><div class="card">Connect to Instagram<br>Connect an Instagram profile to manage comments.<br><button>Not now</button> <button>Connect</button></div><div id="rows"></div></div>
   </div>
   <div id="main"><div id="head"></div><div id="msgs"></div><div id="bottom"></div></div>
-  <div id="right"><b id="rname"></b><p>About</p></div>
+  <div id="right"><b id="rname"></b><p>About</p><div id="labels"></div></div>
 </div>
 <script>
 (() => {
@@ -92,7 +92,7 @@
       .concat(o.last === "them" ? [{ me: false, text: o.text }] : [{ me: true, text: "*GOOD NEWS! There's more to explore with our new package" }]),
     time: ["1:30AM", "Fri", "Thu", "Apr 13"][i % 4],
   }));
-  const mock = window.__mock = { sent: [], done: [], flags: {}, trusted: [], loaded: 12, selected: null, convs };
+  const mock = window.__mock = { sent: [], done: [], flags: {}, trusted: [], labeled: [], loaded: 12, selected: null, convs };
   const $ = (s) => document.querySelector(s);
   const rowsEl = $("#rows");
 
@@ -154,12 +154,13 @@
   }
   function renderMain() {
     const c = mock.selected;
-    if (!c) { $("#head").innerHTML = ""; $("#msgs").innerHTML = ""; $("#bottom").innerHTML = ""; $("#rname").textContent = ""; return; }
+    if (!c) { $("#head").innerHTML = ""; $("#msgs").innerHTML = ""; $("#bottom").innerHTML = ""; $("#rname").textContent = ""; $("#labels").innerHTML = ""; return; }
     const shown = mock.flags.wrongHeaderFor === c.name ? "Someone Else" : c.name;
     $("#head").innerHTML = `<img class="avatar" src="${AV(c.color)}"><div><div class="hname"></div><small>Assign this conversation ▾</small></div>
       <div class="actions"><button aria-label="Mark as spam">!</button><button aria-label="Delete">🗑</button><button aria-label="Star">★</button><button aria-label="Mark as unread">✉</button><button aria-label="Move to done">✓</button></div>`;
     $("#head .hname").textContent = shown;
     $("#rname").textContent = shown;
+    renderLabels(c);
     $("#head [aria-label='Move to done']").onclick = () => moveToDone(c);
     renderMsgs();
     if (c.blocked) {
@@ -183,6 +184,33 @@
     comp.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); mock.trusted.push(e.isTrusted); send(); } });
     $("#bottom [aria-label='Send']").onclick = (e) => { mock.trusted.push(e.isTrusted); send(); };
   }
+  // Right panel "Labels" like Business Suite: type a name in "Add label" and press Enter.
+  function renderLabels(c) {
+    const box = $("#labels");
+    box.innerHTML = `<p><b>Labels</b></p><div class="chips"></div><input placeholder="Add label">`;
+    for (const l of c.labels || []) {
+      const chip = document.createElement("span");
+      chip.className = "chip"; chip.textContent = l; chip.style.cssText = "display:inline-block;background:#e7f3ff;padding:2px 6px;margin:2px;border-radius:4px";
+      box.querySelector(".chips").appendChild(chip);
+    }
+    const inp = box.querySelector("input");
+    inp.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || !inp.value.trim()) return;
+      c.labels = c.labels || [];
+      if (!c.labels.includes(inp.value.trim())) c.labels.push(inp.value.trim());
+      mock.labeled.push({ id: c.id, label: inp.value.trim() });
+      inp.value = "";
+      renderLabels(c);
+    });
+  }
+  // A customer writes back: their chat jumps to the top with their message as the preview.
+  mock.reply = (id, text) => {
+    const c = convs.find((x) => x.id === id);
+    c.msgs.push({ me: false, text });
+    convs.splice(convs.indexOf(c), 1); convs.unshift(c);
+    renderList();
+    if (mock.selected === c) renderMsgs();
+  };
   function renderMsgs() {
     const c = mock.selected, box = $("#msgs");
     box.innerHTML = "";

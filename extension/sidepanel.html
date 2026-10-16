@@ -17,8 +17,37 @@
 
 <nav class="tabs" role="tablist">
   <button id="tabMain" class="tab on" role="tab" aria-selected="true">Main</button>
+  <button id="tabBuyers" class="tab" role="tab" aria-selected="false">Buyers <span id="hotCount" class="count hot" hidden>0</span></button>
   <button id="tabProblems" class="tab" role="tab" aria-selected="false">Problems <span id="probCount" class="count" hidden>0</span></button>
 </nav>
+
+<div id="buyersView" hidden>
+  <section class="card">
+    <div class="loghead"><h2>Buyers</h2>
+      <select id="bFilter" aria-label="Which message"><option value="">All messages</option></select></div>
+    <div class="counts">
+      <div class="k-hot"><b id="bHot">0</b><span>🔥 Hot</span></div>
+      <div class="k-warm"><b id="bWarm">0</b><span>🙂 Warm</span></div>
+      <div><b id="bReplied">0</b><span>Replied</span></div>
+      <div><b id="bCold">0</b><span>❄️ Not interested</span></div>
+    </div>
+    <div id="bSummary" class="hint"></div>
+    <div class="bbtns">
+      <button id="bCheck" class="primary">Check replies</button>
+      <button id="bLabel">Label hot leads</button>
+      <button id="bStop" class="danger" hidden>Stop</button>
+    </div>
+    <div id="bStatus" class="reason"></div>
+    <label class="check"><input id="bAuto" type="checkbox"> After checking, add this label to hot leads in Business Suite:</label>
+    <input id="bLabelName" class="field" aria-label="Label name">
+    <p class="hint">Check replies reads your inbox list (it doesn't open chats). It sorts people you followed up by
+      what they wrote back. Change the words it looks for in Settings → Advanced.</p>
+  </section>
+  <section class="card">
+    <h2>People who replied</h2>
+    <ol id="leads" class="leads"></ol>
+  </section>
+</div>
 
 <div id="problemsView" hidden>
   <section class="card">
@@ -58,7 +87,11 @@
 </section>
 
 <section class="card">
-  <h2>Follow-up message</h2>
+  <div class="loghead"><h2>Follow-up messages</h2>
+    <div><button id="tplNew" class="small">+ New</button> <button id="tplDel" class="small danger">Delete</button></div></div>
+  <select id="tplSelect" class="field" aria-label="Saved messages"></select>
+  <label class="hint">Name of this message<input id="tplName" class="field"></label>
+  <div id="tplStats" class="tplstats"></div>
   <textarea id="tplText" rows="5" placeholder="Hi {first_name}! Just following up…"></textarea>
   <div class="row">
     <button id="insName" class="small">+ First name</button>
@@ -92,6 +125,9 @@
     <label>"Can't message" banner text (one per line)<textarea id="aBlocked" rows="2"></textarea></label>
     <label>Names that go straight to Done (one per line)<textarea id="aNames" rows="2"></textarea></label>
     <label>Meta warnings that pause the run (one per line)<textarea id="aStop" rows="4"></textarea></label>
+    <label>🔥 Hot buyer words (one per line)<textarea id="aHot" rows="4"></textarea></label>
+    <label>🙂 Warm words (one per line)<textarea id="aWarm" rows="3"></textarea></label>
+    <label>❄️ Not interested words (one per line)<textarea id="aCold" rows="3"></textarea></label>
     <button id="aReset" class="small">Reset to defaults</button>
   </details>
 </details>
@@ -130,6 +166,7 @@
   <p id="confirmText"></p>
   <div class="controls"><button id="confirmYes" class="danger">Yes</button><button id="confirmNo">Cancel</button></div>
 </div>
+<script src="engine.js"></script>
 <script src="connect.js"></script>
 <script src="sidepanel.js"></script>
 </body>

@@ -9,27 +9,35 @@ const DEF = {
     "Your account has been restricted", "account is restricted", "Confirm your identity", "Security check", "Action blocked"],
   order: "top", onlyIfLastFromMe: true, moveSentToDone: false, testMode: false, imageRequired: true,
   stepDelayMs: 1200, betweenChatsSec: 8, dailyCap: 300, inboxUrl: "",
+  hotWords: FollowUpEngine.DEFAULTS.hotWords, warmWords: FollowUpEngine.DEFAULTS.warmWords,
+  coldWords: FollowUpEngine.DEFAULTS.coldWords, labelName: "Hot lead", autoLabel: true,
 };
 const BAD = new Set(["FAILED", "REVIEW", "UNKNOWN"]);
-let settings = {}, template = {}, tabId = null, state = "idle", scrollState = "idle";
+let settings = {}, template = {}, templates = [], contacts = {}, tabId = null, state = "idle", scrollState = "idle";
 
 // ---------- storage ----------
 async function loadAll() {
-  const d = await chrome.storage.local.get(["settings", "template", "stats", "log", "campaign", "problems"]);
+  const d = await chrome.storage.local.get(["settings", "template", "templates", "activeTemplate", "stats", "log", "campaign", "problems", "contacts"]);
   showProblems(d.problems || []);
   settings = Object.assign({}, DEF, d.settings || {});
-  template = d.template || { text: DEF.template, imageDataUrl: "", imageName: "" };
+  // Saved messages. The single message from older versions becomes "Message 1".
+  templates = d.templates && d.templates.length ? d.templates
+    : [Object.assign({ id: "t" + Date.now(), name: "Message 1", text: DEF.template, imageDataUrl: "", imageName: "" }, d.template || {})];
+  template = templates.find((t) => t.id === d.activeTemplate) || templates[0];
+  contacts = d.contacts || {};
+  if (!d.templates) saveTemplate();
   fillForm();
   showStats(d.stats);
   showLog(d.log || []);
   $("remembered").textContent = `${(d.campaign && d.campaign.doneIds.length) || 0} chats remembered in this campaign`;
 }
 const saveSettings = () => chrome.storage.local.set({ settings });
-const saveTemplate = () => chrome.storage.local.set({ template });
+const saveTemplate = () => chrome.storage.local.set({ templates, activeTemplate: template.id, template });
 
 // ---------- form ----------
 const lines = (v) => v.split("\n").map((s) => s.trim()).filter(Boolean);
 function fillForm() {
+  showTemplates();
   $("tplText").value = template.text || "";
   $("inboxUrl").value = settings.inboxUrl || "";
   showInboxMsg();
@@ -44,6 +52,11 @@ function fillForm() {
   $("aBlocked").value = settings.blockedTexts.join("\n");
   $("aNames").value = settings.excludeNames.join("\n");
   $("aStop").value = settings.stopTexts.join("\n");
+  $("aHot").value = settings.hotWords.join("\n");
+  $("aWarm").value = settings.warmWords.join("\n");
+  $("aCold").value = settings.coldWords.join("\n");
+  $("bAuto").checked = settings.autoLabel;
+  $("bLabelName").value = settings.labelName;
   $("cCap").textContent = "of " + settings.dailyCap;
   $("fbName").textContent = settings.fallbackName;
   showImage();
@@ -61,6 +74,11 @@ function readSettings() {
   settings.blockedTexts = lines($("aBlocked").value);
   settings.excludeNames = lines($("aNames").value);
   settings.stopTexts = lines($("aStop").value);
+  settings.hotWords = lines($("aHot").value);
+  settings.warmWords = lines($("aWarm").value);
+  settings.coldWords = lines($("aCold").value);
+  settings.autoLabel = $("bAuto").checked;
+  settings.labelName = $("bLabelName").value.trim() || DEF.labelName;
   $("cCap").textContent = "of " + settings.dailyCap;
   saveSettings();
 }
@@ -104,17 +122,19 @@ $("imgFile").addEventListener("change", () => {
   $("imgFile").value = "";
 });
 $("imgRemove").addEventListener("click", () => { template.imageDataUrl = ""; template.imageName = ""; saveTemplate(); showImage(); });
-for (const id of ["sBetween", "sStep", "sCap", "sOrder", "sLastMine", "sSentDone", "sImgReq", "sTest", "aBlocked", "aNames", "aStop"]) {
+for (const id of ["sBetween", "sStep", "sCap", "sOrder", "sLastMine", "sSentDone", "sImgReq", "sTest", "aBlocked", "aNames", "aStop",
+  "aHot", "aWarm", "aCold", "bAuto", "bLabelName"]) {
   $(id).addEventListener("change", readSettings);
 }
 $("aReset").addEventListener("click", () => {
-  Object.assign(settings, { blockedTexts: DEF.blockedTexts, excludeNames: DEF.excludeNames, stopTexts: DEF.stopTexts });
+  Object.assign(settings, { blockedTexts: DEF.blockedTexts, excludeNames: DEF.excludeNames, stopTexts: DEF.stopTexts,
+    hotWords: DEF.hotWords, warmWords: DEF.warmWords, coldWords: DEF.coldWords });
   saveSettings(); fillForm();
 });
 
 // ---------- talking to the Business Suite tab ----------
-async function send(cmd) {
-  const r = await sendToInbox(cmd);
+async function send(cmd, extra) {
+  const r = await sendToInbox(cmd, extra);
   tabId = r.tab ? r.tab.id : null;
   $("where").textContent = r.tab && r.ok !== false ? "Connected to your Business Suite tab" : r.message;
   return r;
@@ -184,6 +204,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
   if (msg.progress) { $("toolOut").hidden = false; $("toolOut").textContent = msg.progress; }
   if (msg.scroll) showScroll(msg.scroll);
+  if (msg.buyers) buyersBusy(msg.buyers.state !== "done", msg.buyers.message);
 });
 chrome.storage.onChanged.addListener((ch) => {
   if (ch.campaign) $("remembered").textContent = `${(ch.campaign.newValue && ch.campaign.newValue.doneIds.length) || 0} chats remembered in this campaign`;
@@ -191,15 +212,14 @@ chrome.storage.onChanged.addListener((ch) => {
 
 // ---------- tabs and the Problems list ----------
 function showTab(which) {
-  const problems = which === "problems";
-  $("mainView").hidden = problems;
-  $("problemsView").hidden = !problems;
-  $("tabMain").classList.toggle("on", !problems);
-  $("tabProblems").classList.toggle("on", problems);
-  $("tabMain").setAttribute("aria-selected", String(!problems));
-  $("tabProblems").setAttribute("aria-selected", String(problems));
+  for (const [tab, view, name] of [["tabMain", "mainView", "main"], ["tabBuyers", "buyersView", "buyers"], ["tabProblems", "problemsView", "problems"]]) {
+    $(view).hidden = which !== name;
+    $(tab).classList.toggle("on", which === name);
+    $(tab).setAttribute("aria-selected", String(which === name));
+  }
 }
 $("tabMain").addEventListener("click", () => showTab("main"));
+$("tabBuyers").addEventListener("click", () => showTab("buyers"));
 $("tabProblems").addEventListener("click", () => showTab("problems"));
 $("seeProblems").addEventListener("click", () => showTab("problems"));
 
@@ -242,6 +262,120 @@ $("pClear").addEventListener("click", () => ask("Clear the Problems list?", asyn
   await chrome.storage.local.set({ problems: [] }); showProblems([]);
 }));
 chrome.storage.onChanged.addListener((ch) => { if (ch.problems) showProblems(ch.problems.newValue || []); });
+
+// ---------- saved messages ----------
+function statsFor(tid) {
+  const list = Object.values(contacts).filter((c) => !tid || c.templateId === tid);
+  const replied = list.filter((c) => c.kind);
+  return { sent: list.length, replied: replied.length, hot: replied.filter((c) => c.kind === "hot").length,
+    warm: replied.filter((c) => c.kind === "warm").length, cold: replied.filter((c) => c.kind === "cold").length,
+    other: replied.filter((c) => c.kind === "replied").length };
+}
+function showTemplates() {
+  $("tplSelect").replaceChildren(...templates.map((t) => new Option(t.name, t.id, false, t.id === template.id)));
+  $("tplName").value = template.name;
+  $("tplDel").disabled = templates.length < 2;
+  const st = statsFor(template.id);
+  const pct = st.sent ? Math.round((st.replied / st.sent) * 100) : 0;
+  const chip = (label, n) => { const s = document.createElement("span"); s.append(label + " "); const b = document.createElement("b"); b.textContent = n; s.append(b); return s; };
+  $("tplStats").replaceChildren(chip("Sent", st.sent), chip("Replied", `${st.replied} (${pct}%)`), chip("🔥 Hot", st.hot));
+  const f = $("bFilter").value;
+  $("bFilter").replaceChildren(new Option("All messages", ""), ...templates.map((t) => new Option(t.name, t.id, false, t.id === f)));
+}
+function selectTemplate(id) {
+  template = templates.find((t) => t.id === id) || templates[0];
+  saveTemplate();
+  fillForm();
+}
+$("tplSelect").addEventListener("change", () => selectTemplate($("tplSelect").value));
+$("tplName").addEventListener("input", () => {
+  template.name = $("tplName").value.trim() || "Untitled message";
+  saveTemplate();
+  $("tplSelect").selectedOptions[0].textContent = template.name;
+});
+$("tplNew").addEventListener("click", () => {
+  const t = { id: "t" + Date.now(), name: "Message " + (templates.length + 1), text: "Hi {first_name}! ", imageDataUrl: "", imageName: "" };
+  templates.push(t);
+  selectTemplate(t.id);
+  $("tplText").focus();
+});
+$("tplDel").addEventListener("click", () => {
+  if (templates.length < 2) return;
+  ask(`Delete the message “${template.name}”? Its reply numbers stay in the Buyers tab.`, () => {
+    templates = templates.filter((t) => t.id !== template.id);
+    selectTemplate(templates[0].id);
+  });
+});
+
+// ---------- Buyers ----------
+const KIND = { hot: ["HOT", 0], warm: ["WARM", 1], replied: ["REPLIED", 2], cold: ["NOT INTERESTED", 3] };
+function leadItem(c) {
+  const li = document.createElement("li");
+  li.className = c.kind;
+  const head = document.createElement("div");
+  head.className = "lh";
+  const who = document.createElement("span");
+  who.className = "who"; who.textContent = c.name;
+  const pill = document.createElement("span");
+  pill.className = "kind " + c.kind; pill.textContent = KIND[c.kind][0];
+  head.append(who, pill);
+  const said = document.createElement("div");
+  said.className = "said"; said.textContent = "“" + (c.reply || "") + "”";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = `Message: ${c.templateName || "—"} · sent ${new Date(c.sentAt).toLocaleDateString()}`;
+  const foot = document.createElement("div");
+  foot.className = "lh";
+  const lab = document.createElement("span");
+  if (c.kind === "hot") {
+    lab.className = "lab" + (c.labelError && !c.labeled ? " bad" : "");
+    lab.textContent = c.labeled ? `✓ Labeled “${settings.labelName}”` : c.labelError ? "Label not added (see Problems)" : "Not labeled yet";
+  }
+  const open = document.createElement("button");
+  open.className = "small"; open.textContent = "Open chat";
+  open.addEventListener("click", async () => {
+    $("bStatus").textContent = `Opening ${c.name}…`;
+    const r = await send("openChat", { key: c.key, name: c.name });
+    $("bStatus").textContent = r.ok ? `Opened ${c.name} in Business Suite.` : r.message;
+  });
+  foot.append(lab, open);
+  li.append(head, said, meta, foot);
+  return li;
+}
+function showBuyers() {
+  const f = $("bFilter").value;
+  const st = statsFor(f);
+  $("bHot").textContent = st.hot; $("bWarm").textContent = st.warm; $("bReplied").textContent = st.other; $("bCold").textContent = st.cold;
+  const pct = st.sent ? Math.round((st.replied / st.sent) * 100) : 0;
+  $("bSummary").textContent = st.sent ? `${st.sent} people followed up · ${st.replied} replied (${pct}%)` : "Nobody followed up yet. Send a run first, then press Check replies.";
+  const hotAll = statsFor("").hot;
+  $("hotCount").textContent = hotAll; $("hotCount").hidden = !hotAll;
+  const people = Object.values(contacts).filter((c) => c.kind && (!f || c.templateId === f))
+    .sort((a, b) => KIND[a.kind][1] - KIND[b.kind][1] || String(b.replyAt).localeCompare(String(a.replyAt)));
+  if (!people.length) {
+    const li = document.createElement("li");
+    li.className = "meta"; li.textContent = "No replies yet. Press Check replies after people have had time to answer.";
+    $("leads").replaceChildren(li);
+  } else $("leads").replaceChildren(...people.slice(0, 300).map(leadItem));
+  showTemplates();
+}
+$("bFilter").addEventListener("change", showBuyers);
+function buyersBusy(busy, message) {
+  $("bCheck").disabled = busy; $("bLabel").disabled = busy; $("bStop").hidden = !busy;
+  if (message !== undefined) $("bStatus").textContent = message;
+}
+$("bCheck").addEventListener("click", async () => {
+  readSettings();
+  const r = await send("checkReplies");
+  buyersBusy(r.ok, r.message);
+});
+$("bLabel").addEventListener("click", async () => {
+  readSettings();
+  const r = await send("labelHot");
+  buyersBusy(r.ok, r.message);
+});
+$("bStop").addEventListener("click", () => send("stopBuyers"));
+chrome.storage.onChanged.addListener((ch) => { if (ch.contacts) { contacts = ch.contacts.newValue || {}; showBuyers(); } });
 
 // ---------- your inbox link ----------
 function showInboxMsg(text, kind) {
@@ -366,6 +500,9 @@ $("newCampaign").addEventListener("click", () => ask("Start a new campaign? The 
   await loadAll();
   setState("idle");
   showKeys();
+  showBuyers();
+  const bs = await send("buyersState");
+  if (bs.ok && bs.busy) buyersBusy(true, "Working…");
   const sc = await send("scrollState");
   if (sc.ok && sc.state !== "idle") showScroll({ state: sc.state, message: sc.state === "paused" ? "Scrolling paused" : "Scrolling the inbox down…" });
   const r = await send("ping");

@@ -58,6 +58,19 @@
     pageTimeoutMs: 15000,
     maxConsecutiveFailures: 3,
     imageRequired: true,
+
+    // Reading replies (Buyers tab). Words are matched as whole words, any language.
+    hotWords: ["how much", "hm", "magkano", "mag kano", "price", "presyo", "pricelist", "order", "pa order", "mag order",
+      "paorder", "cod", "available", "avail", "meron pa", "may stock", "stock", "saan", "location", "loc", "address",
+      "reserve", "pa reserve", "bibili", "bili", "kukuha", "kuha", "buy", "payment", "gcash", "how to order", "paano",
+      "pano", "delivery", "shipping", "sf", "rate"],
+    warmWords: ["interested", "interesado", "details", "detail", "info", "more info", "pa send", "pasend", "send", "pm",
+      "sige", "ok", "okay", "oo", "yes", "yup", "ge", "pwede", "pede", "ano po", "ano yan", "tell me more", "pakita",
+      "picture", "pic", "pics"],
+    coldWords: ["not interested", "no thanks", "no thank you", "hindi na", "di na", "wag na", "huwag na", "ayaw ko",
+      "ayoko", "stop", "unsubscribe", "busy", "no", "ayaw", "hindi"],
+    labelName: "Hot lead",
+    autoLabel: true, // add the label in Business Suite right after "Check replies"
   };
 
   // ---------- small helpers ----------
@@ -540,6 +553,16 @@
       why: "Meta may be limiting or checking your account.",
       fix: "Read the warning in the Business Suite tab. If it's about limits or blocking, stop for today and lower the Daily limit.",
     },
+    CHAT_NOT_FOUND: {
+      what: "This person's chat couldn't be found in the inbox list.",
+      why: "The chat is far down the list, was moved to Done, or the person changed their name.",
+      fix: "Search for the name in Business Suite's inbox search box and open it yourself.",
+    },
+    LABEL_FAILED: {
+      what: "The “Hot lead” label couldn't be added to this chat in Business Suite.",
+      why: "The “Add label” box wasn't found on the right side of the chat, or the label didn't show after adding it.",
+      fix: "Add the label yourself in the chat's right panel (Labels → Add label). If it fails for every chat, send Claude a screenshot of the right panel.",
+    },
     ERROR: {
       what: "Something unexpected went wrong on this chat, so nothing was sent.",
       why: "The page changed in a way the app didn't expect.",
@@ -549,7 +572,7 @@
 
   async function processRow(ctx, row) {
     const { cfg, hooks, list } = ctx;
-    const out = (status, reason, extra) => Object.assign({ time: new Date().toISOString(), name: row.name, id: null, status, reason: reason || "" }, extra || {});
+    const out = (status, reason, extra) => Object.assign({ time: new Date().toISOString(), name: row.name, key: row.key, id: null, status, reason: reason || "" }, extra || {});
     // A problem entry: status (FAILED unless given), plus the code and its plain-language help.
     const problem = (code, reason, extra) => {
       const e = Object.assign({}, extra);
@@ -896,6 +919,163 @@
   function resumeScroll() { if (scrollJob.state === "paused" || scrollJob.paused) { scrollJob.paused = false; return true; } return false; }
   function stopScroll() { if (scrollJob.state !== "idle") { scrollJob.cancel = true; scrollJob.paused = false; return true; } return false; }
   function scrollState() { return scrollJob.state; }
+  // ---------- replies and buyers ----------
+  // Sorts a reply into "hot", "warm", "cold" (not interested) or "replied" (unclear).
+  function classifyReply(text, cfg) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    const words = (s) => " " + low(s).normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").trim() + " ";
+    const t = words(text);
+    const has = (w) => { const p = words(w); return p.trim() && t.includes(p); };
+    const strongCold = cfg.coldWords.filter((w) => w.trim().includes(" ") || w.length > 5);
+    if (strongCold.some(has)) return "cold";
+    if (cfg.hotWords.some(has)) return "hot";
+    if (cfg.warmWords.some(has)) return "warm";
+    if (cfg.coldWords.some(has)) return "cold";
+    return "replied";
+  }
+  // The latest message shown under the name in an inbox row.
+  function previewOf(row) {
+    const i = row.lines.indexOf(row.name);
+    return row.lines.slice(i + 1).find((l) => !TIME_RE.test(l)) || "";
+  }
+
+  // Finds a chat in the inbox list (by name + photo, or by name), scrolling down if needed.
+  async function findChat(cfg, key, name, maxPages = 60) {
+    const list = findList(cfg);
+    if (!list) return null;
+    const match = (r) => r.key === key || r.name === name;
+    let r = getRows(list, cfg).find(match);
+    if (r) return { list, row: r };
+    list.scrollTop = 0;
+    await sleep(500);
+    let stale = 0;
+    for (let page = 0; page < maxPages && stale < 3; page++) {
+      r = getRows(list, cfg).find(match);
+      if (r) return { list, row: r };
+      const before = list.scrollTop;
+      list.scrollTop += list.clientHeight * 0.8;
+      await sleep(500);
+      if (list.scrollTop === before) stale = (await loadMore(list, cfg)) ? 0 : stale + 1;
+    }
+    return null;
+  }
+  async function openChat(cfg, key, name, hooks) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    hooks = hooks || {};
+    const f = await findChat(cfg, key, name);
+    if (!f) return { ok: false, code: "CHAT_NOT_FOUND", help: HELP.CHAT_NOT_FOUND };
+    f.row.el.scrollIntoView({ block: "center", inline: "nearest" });
+    await sleep(300);
+    const row = getRows(f.list, cfg).find((r) => r.key === f.row.key) || f.row;
+    await click(nameElementIn(row), hooks);
+    const ok = await waitFor(() => headerHasName(row.name, f.list), cfg.pageTimeoutMs);
+    return ok ? { ok: true, list: f.list, row } : { ok: false, code: "OPEN_TIMEOUT", help: HELP.OPEN_TIMEOUT };
+  }
+
+  // "Check replies": reads the inbox list from the top and reports which of the given people
+  // wrote back (their row's latest message isn't "You: …"). Nothing is opened or clicked.
+  const scanJob = { state: "idle", cancel: false };
+  async function scanReplies(cfg, contacts, onProgress, maxRows = 600) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    if (scanJob.state !== "idle") return { ok: false, message: "Already checking replies" };
+    const list = findList(cfg);
+    if (!list) return { ok: false, message: "Can't find the inbox list. Open Business Suite → Inbox." };
+    Object.assign(scanJob, { state: "running", cancel: false });
+    const byKey = new Map(contacts.map((c) => [c.key, c]));
+    const nameCount = {};
+    contacts.forEach((c) => { nameCount[c.name] = (nameCount[c.name] || 0) + 1; });
+    const byName = new Map(contacts.filter((c) => nameCount[c.name] === 1).map((c) => [c.name, c]));
+    const found = new Map(), seen = new Set();
+    try {
+      list.scrollTop = 0;
+      await sleep(600);
+      let stale = 0;
+      while (seen.size < maxRows && stale < 3 && !scanJob.cancel) {
+        for (const r of getRows(list, cfg)) {
+          if (seen.has(r.key + "#" + r.name)) continue;
+          seen.add(r.key + "#" + r.name);
+          const c = byKey.get(r.key) || byName.get(r.name);
+          if (c && !r.fromMe && !found.has(c.key)) {
+            const reply = previewOf(r);
+            found.set(c.key, { key: c.key, name: r.name, reply, kind: classifyReply(reply, cfg) });
+          }
+        }
+        if (onProgress) try { onProgress({ state: "running", rows: seen.size, replies: found.size }); } catch (_) {}
+        const before = list.scrollTop;
+        list.scrollTop += list.clientHeight * 0.8;
+        await sleep(600);
+        if (list.scrollTop === before) stale = (await loadMore(list, cfg)) ? 0 : stale + 1;
+      }
+      list.scrollTop = 0;
+      return { ok: true, rows: seen.size, replies: [...found.values()], stopped: scanJob.cancel };
+    } finally {
+      scanJob.state = "idle";
+    }
+  }
+
+  // Adds a Business Suite label (e.g. "Hot lead") to one person's chat, then checks it shows.
+  async function labelChat(cfg, contact, hooks) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    hooks = hooks || {};
+    const name = cfg.labelName;
+    const fail = (code, why) => ({ ok: false, code, why, help: HELP[code] });
+    const o = await openChat(cfg, contact.key, contact.name, hooks);
+    if (!o.ok) return o;
+    await sleep(cfg.stepDelayMs);
+    const lr = rect(o.list);
+    const right = (el) => !o.list.contains(el) && rect(el).left > lr.right;
+    const box = [...document.querySelectorAll("input,textarea,[contenteditable=true]")].find((el) => isVisible(el) && right(el) &&
+      /label/i.test((el.getAttribute("placeholder") || "") + " " + (el.getAttribute("aria-label") || "")));
+    if (!box) return fail("LABEL_FAILED", "No “Add label” box on the right side of the chat");
+    const shown = () => {
+      let n = 0;
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+        const p = t.parentElement;
+        if (p && norm(t.nodeValue) === name && right(p) && isVisible(p) && !p.closest("input,textarea")) n++;
+      }
+      return n;
+    };
+    const before = shown();
+    await click(box, hooks);
+    box.focus();
+    if (box.tagName === "INPUT" || box.tagName === "TEXTAREA") setNativeValue(box, name); else document.execCommand("insertText", false, name);
+    await sleep(900);
+    // Pick the matching item if a list of labels opened; otherwise press Enter.
+    const option = [...document.querySelectorAll("[role=option],[role=menuitem],[role=button],li")].find((el) =>
+      isVisible(el) && right(el) && norm(el.innerText) === name && rect(el).top > rect(box).top);
+    if (option) await click(option, hooks);
+    else {
+      const k = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
+      box.dispatchEvent(new KeyboardEvent("keydown", k));
+      box.dispatchEvent(new KeyboardEvent("keyup", k));
+    }
+    const ok = await waitFor(() => shown() > before, 4000);
+    if (box.isConnected && (box.value || "").trim()) setNativeValue(box, "");
+    if (ok) return { ok: true };
+    if (before > 0) return { ok: true, already: true };
+    return fail("LABEL_FAILED", "The label didn't show on the chat after adding it");
+  }
+
+  async function labelLeads(cfg, contacts, onProgress) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    Object.assign(scanJob, { state: "running", cancel: false });
+    const results = [];
+    try {
+      for (const c of contacts) {
+        if (scanJob.cancel) break;
+        let r;
+        try { r = await labelChat(cfg, c, {}); } catch (e) { r = { ok: false, code: "ERROR", help: HELP.ERROR, why: String(e && e.message || e) }; }
+        results.push(Object.assign({ key: c.key, name: c.name }, r));
+        if (onProgress) try { onProgress({ state: "labeling", done: results.length, total: contacts.length, last: results[results.length - 1] }); } catch (_) {}
+        await sleep(Math.min(cfg.stepDelayMs, 1500));
+      }
+    } finally {
+      scanJob.state = "idle";
+    }
+    return { ok: true, results };
+  }
+
   async function scrollChatToLatest(cfg) {
     cfg = Object.assign({}, DEFAULTS, cfg || {});
     const list = findList(cfg);
@@ -962,9 +1142,11 @@
     startWithBridge(config) { api.start(config, bridgeHooks()); return true; },
     pause() { api.current && api.current.pause("Paused"); },
     resume() { api.current && api.current.resume(); },
-    stop() { api.current && api.current.stop(); stopScroll(); },
+    stop() { api.current && api.current.stop(); stopScroll(); scanJob.cancel = true; },
     status() { return api.current ? api.current.state : "idle"; },
-    tools: { loadWholeInbox, pauseScroll, resumeScroll, stopScroll, scrollState, scrollChatToLatest, diagnose },
+    classifyReply,
+    tools: { loadWholeInbox, pauseScroll, resumeScroll, stopScroll, scrollState, scrollChatToLatest, diagnose,
+      scanReplies, labelChat, labelLeads, openChat, scanState: () => scanJob.state },
   };
   root.FollowUpEngine = api;
 })(typeof window !== "undefined" ? window : globalThis);
