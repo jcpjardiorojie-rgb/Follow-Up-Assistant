@@ -98,6 +98,13 @@ app remembers them, so they're never messaged twice. Stop and Pause work while i
 **Moving to Done is always on** for "Facebook user" chats and chats showing "You are no longer able to send
 messages…" (except in Test mode). Chats you message are moved too only if you tick "Move chats to Done after sending".
 
+**Tools work while a run is going or paused.** Check page and Scroll chat to latest work right away.
+Scroll inbox to the bottom first pauses the run (after the chat it's on), then scrolls; press **Resume**
+when you're done. Resume waits until the scrolling has finished, been paused or been stopped.
+
+If the inbox stops loading while scrolling down, the app scrolls up a little and back down (twice) before
+deciding it reached the bottom, the same thing you'd do by hand.
+
 **Scroll inbox to the bottom** (the separate button) can also be paused: press it once to start, again to
 **Pause scrolling**, again to **Resume scrolling**. **Stop** ends it.
 

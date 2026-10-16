@@ -277,3 +277,36 @@ def test_check_replies_finds_buyers_and_labels_hot_leads(page):
     # A chat that can't be found explains why
     miss = page.evaluate("FollowUpEngine.tools.labelChat({ pageTimeoutMs: 1500 }, { key: 'x|y', name: 'Nobody Here' })")
     assert not miss["ok"] and miss["code"] == "CHAT_NOT_FOUND" and miss["help"]["fix"]
+
+
+
+def test_screen_order_keeps_sending_on_a_long_inbox(page):
+    # Your report: with "Lowest chat on screen", after about 12 messages it only scrolled up.
+    page.goto("https://business.facebook.com/latest/inbox/all/?extra=40")
+    page.evaluate(__import__("conftest").ENGINE_JS)
+    page.evaluate("__mock.flags.virtual = true")
+    page.evaluate("FollowUpEngine.tools.loadWholeInbox({}, null, 60)")
+    page.evaluate("(l => { l.scrollTop = l.scrollHeight - l.clientHeight - 700; })(document.querySelector('#list'))")
+    page.wait_for_timeout(400)
+    on_screen = page.evaluate("""() => { const l = document.querySelector('#list').getBoundingClientRect();
+      return [...document.querySelectorAll('#rows .row')].filter(r => { const b = r.getBoundingClientRect();
+        return b.bottom > l.top && b.top + b.height / 2 <= l.bottom; }).map(r => r.querySelector('.name').textContent); }""")
+    lowest = on_screen[-1]
+    all_names = page.evaluate("__mock.convs.filter(c => !c.done).map(c => c.name)")
+    below = set(all_names[all_names.index(lowest) + 1:])
+    res = run(page, order="screen", onlyIfLastFromMe=False, maxWaitMs=400000)
+    m = mock(page)
+    sent = [s["name"] for s in m["sent"]]
+    assert res["state"] == "finished" and res["states"][-1]["reason"] == "Reached the top of the inbox"
+    assert len(sent) > 25  # well past the first screenful
+    assert not set(sent) & below  # nothing below the starting chat
+    assert sent[0] == lowest or all_names.index(sent[0]) < all_names.index(lowest)
+    can_send = [n for n in all_names[: all_names.index(lowest) + 1] if n != "Facebook user"]
+    blocked = {c[1] for c in m["names"] if c[2]}
+    assert sorted(sent) == sorted(n for n in can_send if n not in blocked)
+
+
+def test_scrolling_down_gets_unstuck_by_scrolling_up_a_little(page):
+    page.evaluate("__mock.flags.sticky = true")
+    r = page.evaluate("FollowUpEngine.tools.loadWholeInbox({}, null, 60)")
+    assert r["reachedEnd"] and r["rows"] == 22

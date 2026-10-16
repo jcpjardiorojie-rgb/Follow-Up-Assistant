@@ -171,6 +171,7 @@ class Controller:
         self.state = {"state": "idle", "reason": ""}
         self.pw = self.ctx = self.page = None
         self.done_ids = set()
+        self._scroll_starting = False  # between "pause the run" and "start scrolling"
         self._watch = None
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, name="playwright", daemon=True).start()
@@ -190,7 +191,12 @@ class Controller:
         return self.submit(self._eval("FollowUpEngine.pause()"))
 
     def resume(self):
-        return self.submit(self._eval("FollowUpEngine.resume()"))
+        return self.submit(self._resume())
+
+    async def _resume(self):
+        if getattr(self, "_scroll_starting", False) or await self._eval("FollowUpEngine.tools.scrollState()") != "idle":
+            raise RuntimeError("The inbox is still scrolling. Pause or stop the scrolling first, then Resume.")
+        return await self._eval("FollowUpEngine.resume()")
 
     def stop(self):
         return self.submit(self._eval("FollowUpEngine.stop()"))
@@ -313,12 +319,22 @@ class Controller:
         page = await self._inbox_page()
         if await page.evaluate("FollowUpEngine.tools.scrollState()") != "idle":
             raise RuntimeError("Already scrolling.")
-        if self.state.get("state") in ("running", "paused"):
-            raise RuntimeError("Stop the sending run first.")
+        if await page.evaluate("FollowUpEngine.status()") == "running":
+            # Tools work while paused: pause first and let it finish the chat it's on.
+            self._scroll_starting = True
+            self._emit("scroll", {"state": "running", "message": "Pausing the run first (finishing the current chat)…"})
+            try:
+                if not await page.evaluate("FollowUpEngine.pauseAndWait()"):
+                    self._emit("scroll", {"state": "done", "rows": 0, "message": "The run didn't pause in time."})
+                    raise RuntimeError("The run didn't pause in time. Press Pause, then try again.")
+            except Exception:
+                self._scroll_starting = False
+                raise
         cfg = {k: self.store.settings[k] for k in ENGINE_KEYS}
         if not (await page.evaluate("cfg => FollowUpEngine.tools.diagnose(cfg)", cfg))["inboxList"]:
             raise RuntimeError("Can't find the inbox list. Open Business Suite → Inbox.")
         await page.evaluate("cfg => { FollowUpEngine.tools.loadWholeInbox(cfg, (p) => window.fuHook('scroll', p)); return true; }", cfg)
+        self._scroll_starting = False
         return "scrolling"
 
     async def _start(self):

@@ -258,3 +258,32 @@ def test_saved_messages_buyers_and_hot_lead_label(ext):
     panel.click("#tabMain")
     assert "Replied 3 (100%)" in panel.inner_text("#tplStats") and "Hot 1" in panel.inner_text("#tplStats")
     panel.locator("section.card").filter(has=panel.locator("#tplSelect")).screenshot(path=str(SHOTS / "option-a-saved-messages.png"))
+
+
+def test_tools_work_while_running_or_paused(ext):
+    inbox, panel, _ = ext
+    panel.fill("#tplText", "Hi {first_name}!")
+    panel.click("#settingsBox summary")
+    for sel, val in (("#sBetween", "20"), ("#sStep", "0.3")):
+        panel.fill(sel, val)
+        panel.dispatch_event(sel, "change")
+    panel.click("#start")
+    inbox.wait_for_function("__mock.sent.length >= 1", timeout=60_000)
+    # All tools are clickable while running
+    assert not panel.is_disabled("#tLoad") and not panel.is_disabled("#tLatest") and not panel.is_disabled("#tCheck")
+    panel.click("#tCheck")
+    panel.wait_for_selector("#toolOut:has-text('Inbox list')")
+    # Scrolling the inbox pauses the run first, then scrolls
+    inbox.evaluate("__mock.flags.sticky = true")  # slow, stop-and-go loading like the real inbox
+    panel.click("#tLoad")
+    panel.wait_for_selector("#pill.paused", timeout=30_000)
+    panel.wait_for_selector("#tLoad:has-text('Pause scrolling')", timeout=30_000)
+    # Resume waits until scrolling is paused or stopped
+    panel.click("#pause")
+    panel.wait_for_selector("#reason:has-text('still scrolling')")
+    assert panel.inner_text("#pill") == "Paused"
+    panel.wait_for_selector("#tLoad:has-text('Scroll inbox to the bottom')", timeout=60_000)  # scrolling finished
+    panel.click("#pause")  # Resume
+    panel.wait_for_selector("#pill.running", timeout=10_000)
+    panel.click("#stop")
+    panel.wait_for_selector("#pill.stopped", timeout=60_000)

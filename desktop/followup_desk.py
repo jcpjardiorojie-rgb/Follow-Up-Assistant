@@ -500,10 +500,7 @@ class App:
         elif action == "stop":
             self._stop()
         elif action == "toggle_scroll":
-            if self.state in ("running", "paused"):
-                self._note("Stop the sending run before scrolling the inbox.")
-            else:
-                self._load_inbox()
+            self._load_inbox()
         elif action == "scroll_latest":
             self._latest()
 
@@ -610,9 +607,9 @@ class App:
         self.b_pause.config(text="Resume" if self.state == "paused" else "Pause")
         self.b_load.config(text={"running": "Pause scrolling", "paused": "Resume scrolling"}.get(self.scroll, "Scroll inbox to bottom"),
                            style="Primary.TButton" if scrolling else "TButton")
-        self.b_load.state(["disabled"] if busy else ["!disabled"])
-        for b in (self.b_latest, self.b_check):
-            b.state(["disabled"] if busy or scrolling else ["!disabled"])
+        # Tools stay available while running or paused (scrolling the inbox pauses the run first).
+        for b in (self.b_load, self.b_latest, self.b_check):
+            b.state(["!disabled"])
 
     def _add_log(self, e):
         t = (e.get("time") or "")[11:19]

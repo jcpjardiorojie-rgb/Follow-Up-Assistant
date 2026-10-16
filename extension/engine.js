@@ -726,7 +726,8 @@
     resume() { if (this.paused) { this.paused = false; this.setState("running"); } }
     stop() { this.stopped = true; this.paused = false; }
     async gate() {
-      while (this.paused && !this.stopped) await sleep(250);
+      while (this.paused && !this.stopped) { this.atGate = true; await sleep(250); }
+      this.atGate = false;
       if (this.stopped) throw STOP;
     }
     async wait(ms) {
@@ -819,7 +820,11 @@
       const below = {};
       for (const r of rows.slice(start + 1)) below[r.key] = (below[r.key] || 0) + 1;
       await hooks.state({ state: "running", reason: `Starting from “${rows[start].name}”, the lowest chat on screen, and going up.`, current: "" });
-      return { below, known: new Set(rows.map((r) => r.key)) };
+      // Names (with photo) that were only below the screen. A name that is also on or above the
+      // screen (like several "Facebook user" chats) stays allowed.
+      const atOrAbove = new Set(rows.slice(0, start + 1).map((r) => r.key));
+      const belowOnly = new Set(Object.keys(below).filter((k) => !atOrAbove.has(k)));
+      return { below, belowOnly, known: new Set(rows.map((r) => r.key)) };
     }
 
     // Keeps scrolling the inbox down until no older chats load. Pause/Stop work during it.
@@ -846,17 +851,14 @@
 
   // Leaves out the chats that were below the screen at the start (counted from the bottom, so a
   // repeated name like "Facebook user" still works), plus chats that load in below them later.
+  // "Lowest chat on screen": leaves out the chats that were below the screen when Start was pressed.
+  // Business Suite only keeps the chats near the screen in the page, so chats further up appear only
+  // after scrolling up; those are always allowed. The only other chats left out are ones that appear
+  // underneath a below-the-screen chat (older chats loading in at the bottom).
   function onlyFromScreenUp(rows, screen) {
-    const keep = rows.map(() => true);
-    const fromEnd = {};
-    for (let i = rows.length - 1; i >= 0; i--) {
-      const k = rows[i].key;
-      fromEnd[k] = (fromEnd[k] || 0) + 1;
-      if (fromEnd[k] <= (screen.below[k] || 0)) keep[i] = false;
-    }
-    let lastKnown = -1;
-    rows.forEach((r, i) => { if (keep[i] && screen.known.has(r.key)) lastKnown = i; });
-    rows.forEach((r, i) => { if (i > lastKnown && !screen.known.has(r.key)) keep[i] = false; });
+    const keep = rows.map((r) => !screen.belowOnly.has(r.key));
+    const firstBelow = rows.findIndex((r) => screen.belowOnly.has(r.key));
+    if (firstBelow >= 0) rows.forEach((r, i) => { if (i > firstBelow && !screen.known.has(r.key)) keep[i] = false; });
     return rows.filter((_, i) => keep[i]);
   }
 
@@ -869,8 +871,18 @@
 
   async function loadMore(list, cfg) {
     const n = getRows(list, cfg).length, h = list.scrollHeight;
+    const grew = () => list.scrollHeight > h + 5 || getRows(list, cfg).length > n;
     list.scrollTop = list.scrollHeight;
-    return waitFor(() => list.scrollHeight > h + 5 || getRows(list, cfg).length > n, 4000, 250);
+    if (await waitFor(grew, 3000, 250)) return true;
+    // Business Suite sometimes stops loading older chats until the list moves. Do what a person
+    // does: scroll up a little, then back down, and wait again (twice, a bit further up the second time).
+    for (const up of [300, 700]) {
+      list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight - up);
+      await sleep(500);
+      list.scrollTop = list.scrollHeight;
+      if (await waitFor(grew, 2500, 250)) return true;
+    }
+    return false;
   }
 
   // ---------- tools for the buttons ----------
@@ -1144,6 +1156,13 @@
     resume() { api.current && api.current.resume(); },
     stop() { api.current && api.current.stop(); stopScroll(); scanJob.cancel = true; },
     status() { return api.current ? api.current.state : "idle"; },
+    // True once a paused run has finished the chat it was on and is just waiting.
+    halted() { const r = api.current; return !r || !["running", "paused"].includes(r.state) || (r.paused && !!r.atGate); },
+    // Pauses (if running) and waits until the current chat is finished, so a tool can use the page.
+    async pauseAndWait(maxMs = 90000) {
+      if (api.status() === "running") api.pause();
+      return waitFor(() => api.halted(), maxMs, 250);
+    },
     classifyReply,
     tools: { loadWholeInbox, pauseScroll, resumeScroll, stopScroll, scrollState, scrollChatToLatest, diagnose,
       scanReplies, labelChat, labelLeads, openChat, scanState: () => scanJob.state },

@@ -119,3 +119,23 @@ def test_inbox_link_rules(app):
     with pytest.raises(RuntimeError, match="different Facebook Page"):
         c.start().result(10)
     assert page_eval(c, "__mock.sent.length") == 0
+
+
+def test_desktop_tools_while_running(app):
+    c, store, events = app
+    store.settings.update({"betweenChatsSec": 20, "dailyCap": 100})
+    page_eval(c, "new Promise(r => setTimeout(r, 500))")
+    c.start().result(10)
+    end = time.time() + 60
+    while not page_eval(c, "__mock.sent.length") and time.time() < end:
+        time.sleep(0.3)
+    c.load_inbox().result(120)  # pauses the run first, then scrolls
+    assert page_eval(c, "FollowUpEngine.status()") == "paused"
+    with pytest.raises(RuntimeError, match="still scrolling"):
+        c.resume().result(10)
+    end = time.time() + 60
+    while page_eval(c, "FollowUpEngine.tools.scrollState()") != "idle" and time.time() < end:
+        time.sleep(0.3)
+    c.resume().result(10)
+    assert page_eval(c, "FollowUpEngine.status()") == "running"
+    c.stop().result(10)

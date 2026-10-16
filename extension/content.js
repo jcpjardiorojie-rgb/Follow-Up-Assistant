@@ -110,17 +110,28 @@
   }
 
   // "Scroll inbox to the bottom": runs in the background; progress goes to the side panel.
+  let scrollStarting = false; // between "pause the run" and "start scrolling"
+  const scrolling = () => scrollStarting || E.tools.scrollState() !== "idle";
+  const RESUME_BLOCKED = { ok: false, message: "The inbox is still scrolling. Pause or stop the scrolling first, then Resume." };
   async function startScroll() {
-    if (["running", "paused"].includes(E.status())) return { ok: false, message: "Stop the sending run first." };
+    // Tools work while a run is paused. If it's running, pause it first and let it finish the chat it's on.
+    if (scrolling()) return { ok: false, message: "Already scrolling." };
+    if (E.status() === "running") {
+      scrollStarting = true;
+      tell({ scroll: { state: "running", message: "Pausing the run first (finishing the current chat)…" } });
+      const halted = await E.pauseAndWait();
+      if (!halted) { scrollStarting = false; tell({ scroll: { state: "done", rows: 0, message: "The run didn't pause in time." } }); return { ok: false, message: "The run didn't pause in time. Press Pause, then try again." }; }
+    }
     const s = (await load()).settings;
     if (!E.tools.diagnose(s).inboxList) return { ok: false, message: "Can't find the inbox list. Open Business Suite → Inbox." };
     E.tools.loadWholeInbox(s, (p) => tell({ scroll: p }));
+    scrollStarting = false; // the scroll job is now running and blocks Resume by itself
     return { ok: true, message: "Scrolling the inbox down…" };
   }
   async function toggleRun() {
     const st = E.status();
     if (st === "running") { E.pause(); return { ok: true, message: "Paused" }; }
-    if (st === "paused") { E.resume(); return { ok: true, message: "Resumed" }; }
+    if (st === "paused") { if (scrolling()) return RESUME_BLOCKED; E.resume(); return { ok: true, message: "Resumed" }; }
     const r = await start();
     return r.ok ? { ok: true, message: "Started" } : r;
   }
@@ -223,7 +234,7 @@
         case "ping": return { ok: true, state: E.status(), last: lastState };
         case "start": return start();
         case "pause": E.pause(); return { ok: true };
-        case "resume": E.resume(); return { ok: true };
+        case "resume": if (scrolling()) return RESUME_BLOCKED; E.resume(); return { ok: true };
         case "stop": E.stop(); return { ok: true };
         case "loadInbox": return startScroll();
         case "pauseScroll": return { ok: E.tools.pauseScroll() };

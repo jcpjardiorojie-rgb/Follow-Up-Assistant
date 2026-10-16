@@ -162,7 +162,8 @@ function setState(s, reason, current) {
   $("pause").disabled = !(s === "running" || s === "paused");
   $("pause").textContent = s === "paused" ? "Resume" : "Pause";
   $("stop").disabled = !(s === "running" || s === "paused");
-  for (const id of ["tLoad", "tLatest", "tCheck"]) $(id).disabled = s === "running" || s === "paused";
+  // Tools stay available while running or paused (scrolling the inbox pauses the run first).
+  for (const id of ["tLoad", "tLatest", "tCheck"]) $(id).disabled = false;
 }
 
 function showStats(st) {
@@ -408,7 +409,10 @@ $("start").addEventListener("click", async () => {
   if (!r.ok) { setState(r.tab ? "idle" : "offline", r.message); if (!r.tab) watchConnection(); return; }
   setState("running", settings.testMode ? "Test mode: nothing will be sent." : "Working through your inbox…");
 });
-$("pause").addEventListener("click", async () => { await send(state === "paused" ? "resume" : "pause"); });
+$("pause").addEventListener("click", async () => {
+  const r = await send(state === "paused" ? "resume" : "pause");
+  if (r && r.ok === false && r.message) $("reason").textContent = r.message;
+});
 $("stop").addEventListener("click", async () => { await send("stop"); });
 
 async function tool(cmd, busy) {

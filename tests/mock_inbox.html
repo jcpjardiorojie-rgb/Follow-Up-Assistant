@@ -129,9 +129,14 @@
   $("#list").addEventListener("scroll", () => {
     const l = $("#list");
     if (mock.flags.virtual) renderList();
+    // flags.sticky: like Business Suite sometimes, loading stops until the list is scrolled up a bit
+    if (mock.stuck) {
+      if (l.scrollTop < l.scrollHeight - l.clientHeight - 200) mock.stuck = false;
+      return;
+    }
     if (l.scrollTop + l.clientHeight >= l.scrollHeight - 5 && mock.loaded < convs.length && !mock.loading) {
       mock.loading = true;
-      setTimeout(() => { mock.loaded += 6; mock.loading = false; renderList(); }, 400);
+      setTimeout(() => { mock.loaded += 6; mock.loading = false; renderList(); if (mock.flags.sticky) mock.stuck = true; }, 400);
     }
   });
   rowsEl.addEventListener("click", (e) => {
