@@ -79,8 +79,8 @@ def test_scroll_button_pauses_and_shortcuts_work(ext):
     panel.wait_for_selector("#tLoad:has-text('Resume scrolling')")
     assert panel.is_disabled("#start")
     SHOTS.mkdir(parents=True, exist_ok=True)
-    panel.locator("section.card").nth(2).screenshot(path=str(SHOTS / "option-a-scroll-paused.png"))
-    panel.locator("section.card").nth(3).screenshot(path=str(SHOTS / "option-a-shortcuts.png"))
+    panel.locator("section.card").filter(has=panel.locator("#tLoad")).screenshot(path=str(SHOTS / "option-a-scroll-paused.png"))
+    panel.locator("section.card").filter(has=panel.locator("#keys")).screenshot(path=str(SHOTS / "option-a-shortcuts.png"))
     held = inbox.evaluate("__mock.loaded")
     inbox.wait_for_timeout(2000)
     assert inbox.evaluate("__mock.loaded") == held
