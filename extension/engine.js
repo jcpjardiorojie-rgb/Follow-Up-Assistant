@@ -340,9 +340,33 @@
     const r = rect(el);
     return r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth;
   }
+  // Brings an element fully into view inside its scrolling list with a small, smooth move
+  // (just far enough to show it, not jumping it to the middle). Returns true if it scrolled.
+  async function bringIntoView(el, container) {
+    const box = container ? rect(container) : { top: 0, bottom: window.innerHeight };
+    const top = Math.max(box.top, 0), bottom = Math.min(box.bottom, window.innerHeight);
+    const r = rect(el), margin = 12;
+    let delta = 0;
+    if (r.top < top + margin) delta = r.top - top - margin;
+    else if (r.bottom > bottom - margin) delta = r.bottom - bottom + margin;
+    if (!delta) return false;
+    const pos = () => (container ? container.scrollTop : window.scrollY);
+    if (container) container.scrollBy({ top: delta, behavior: "smooth" });
+    else el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    // wait until the glide has finished
+    let last = null;
+    for (let i = 0; i < 25; i++) {
+      await sleep(60);
+      const now = pos();
+      if (now === last) break;
+      last = now;
+    }
+    return true;
+  }
+
   async function click(el, hooks) {
     if (!onScreen(el)) {
-      el.scrollIntoView({ block: "center", inline: "nearest" });
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
       await sleep(120);
     }
     if (!el.isConnected) throw new Error("STALE"); // the list redrew while scrolling
@@ -593,10 +617,7 @@
       // so bring the row into view first, then look it up again before clicking.
       let clicked = false;
       for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
-        if (row.el.isConnected && !onScreen(row.el)) {
-          row.el.scrollIntoView({ block: "center", inline: "nearest" });
-          await sleep(300);
-        }
+        if (row.el.isConnected && (await bringIntoView(row.el, list))) await sleep(150);
         const fresh = getRows(list, cfg).find((r) => r.key === row.key);
         if (!fresh) return out("SKIPPED", "Chat left the list before it could be opened");
         row = fresh;
@@ -978,8 +999,7 @@
     hooks = hooks || {};
     const f = await findChat(cfg, key, name);
     if (!f) return { ok: false, code: "CHAT_NOT_FOUND", help: HELP.CHAT_NOT_FOUND };
-    f.row.el.scrollIntoView({ block: "center", inline: "nearest" });
-    await sleep(300);
+    if (await bringIntoView(f.row.el, f.list)) await sleep(150);
     const row = getRows(f.list, cfg).find((r) => r.key === f.row.key) || f.row;
     await click(nameElementIn(row), hooks);
     const ok = await waitFor(() => headerHasName(row.name, f.list), cfg.pageTimeoutMs);

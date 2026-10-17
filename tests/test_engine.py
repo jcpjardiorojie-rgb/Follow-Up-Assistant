@@ -324,3 +324,19 @@ def test_scroll_to_bottom_finishes_on_a_long_inbox(page):
     assert r["reachedEnd"] and r["message"] == "Reached the bottom of the inbox"
     assert time.time() - t < 120
     assert page.evaluate("__mock.loaded") >= 62
+
+
+
+def test_moves_to_the_next_chat_with_a_small_scroll(page):
+    # Your report: the list jumped around because each chat was scrolled to the middle first.
+    page.evaluate("FollowUpEngine.tools.loadWholeInbox({}, null, 30)")
+    page.evaluate("document.querySelector('#list').scrollTop = 0")
+    page.wait_for_timeout(300)
+    target = page.evaluate("""() => { const l = document.querySelector('#list').getBoundingClientRect();
+      const r = [...document.querySelectorAll('#rows .row')].find(r => r.getBoundingClientRect().bottom > l.bottom);
+      return { name: r.querySelector('.name').textContent, key: '' }; }""")
+    r = page.evaluate("(t) => FollowUpEngine.tools.openChat({}, t.key, t.name)", target)
+    assert r["ok"]
+    moved = page.evaluate("document.querySelector('#list').scrollTop")
+    assert 0 < moved <= 64 + 12 + 2  # one row's height at most, not half a screen
+    assert page.evaluate("__mock.selected.name") == target["name"]
