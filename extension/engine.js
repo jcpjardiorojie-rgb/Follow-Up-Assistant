@@ -870,8 +870,10 @@
   }
 
   async function loadMore(list, cfg) {
-    const n = getRows(list, cfg).length, h = list.scrollHeight;
-    const grew = () => list.scrollHeight > h + 5 || getRows(list, cfg).length > n;
+    // Only a taller list means older chats loaded. (Counting rows on screen is misleading: Business
+    // Suite only keeps the rows near the screen, so that count changes just by scrolling.)
+    const h = list.scrollHeight;
+    const grew = () => list.scrollHeight > h + 5;
     list.scrollTop = list.scrollHeight;
     if (await waitFor(grew, 3000, 250)) return true;
     // Business Suite sometimes stops loading older chats until the list moves. Do what a person

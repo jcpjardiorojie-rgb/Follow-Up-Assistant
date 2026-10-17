@@ -310,3 +310,17 @@ def test_scrolling_down_gets_unstuck_by_scrolling_up_a_little(page):
     page.evaluate("__mock.flags.sticky = true")
     r = page.evaluate("FollowUpEngine.tools.loadWholeInbox({}, null, 60)")
     assert r["reachedEnd"] and r["rows"] == 22
+
+
+def test_scroll_to_bottom_finishes_on_a_long_inbox(page):
+    # 1.5.0 bug: on inboxes that only keep on-screen rows, the "scroll up a little" nudge looked
+    # like new chats loading, so scrolling to the bottom never finished.
+    page.goto("https://business.facebook.com/latest/inbox/all/?extra=40")
+    page.evaluate(__import__("conftest").ENGINE_JS)
+    page.evaluate("__mock.flags.virtual = true; __mock.flags.sticky = true")
+    import time
+    t = time.time()
+    r = page.evaluate("FollowUpEngine.tools.loadWholeInbox({}, null, 300)")
+    assert r["reachedEnd"] and r["message"] == "Reached the bottom of the inbox"
+    assert time.time() - t < 120
+    assert page.evaluate("__mock.loaded") >= 62
