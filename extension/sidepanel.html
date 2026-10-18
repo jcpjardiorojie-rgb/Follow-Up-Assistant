@@ -143,11 +143,11 @@
   <label class="check test"><input id="sTest" type="checkbox"> Test mode: fill the message box, but never press Send or Done</label>
   <fieldset class="group" id="dupBox">
     <legend>Already messaged</legend>
-    <label class="check"><input id="dCheck" type="checkbox"> Don't send if this message is already in the chat</label>
+    <label class="check"><input id="dCheck" type="checkbox"> Don't send if FollowUp already sent this message to them</label>
     <p class="hint">Stop the run when it reaches people who already got this message (that's where your last run started):</p>
     <div class="radios">
       <label class="check"><input type="radio" name="stopBy" value="both"> Stop by name and message <span class="hint">(safest)</span></label>
-      <label class="check"><input type="radio" name="stopBy" value="message"> Stop by message <span class="hint">(also catches ones sent by hand)</span></label>
+      <label class="check"><input type="radio" name="stopBy" value="message"> Stop by message <span class="hint">(any chat with these words, even an old broadcast or one sent by hand)</span></label>
       <label class="check"><input type="radio" name="stopBy" value="name"> Stop by name <span class="hint">(fastest: doesn't open the chat)</span></label>
       <label class="check"><input type="radio" name="stopBy" value="off"> Don't stop, just skip them</label>
     </div>

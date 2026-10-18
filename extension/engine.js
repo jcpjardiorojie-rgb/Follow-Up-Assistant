@@ -732,9 +732,12 @@
 
     await scrollChatToLatestFor(list, composer);
 
-    // Never send the same message twice: is it already in this chat?
-    if (!replying && cfg.dupCheck !== false && (await chatHasMessage(list, composer, cfg.template, row.name, cfg))) {
-      const counted = !thisRun && (cfg.stopBy === "message" || (cfg.stopBy === "both" && nameHit));
+    // Never send the same message twice: is it already in this chat? Only messages FollowUp itself sent
+    // to this name count (an old broadcast with the same words still gets the follow-up), unless you chose
+    // "Stop by message", which also counts ones sent by hand or from another PC.
+    const byText = cfg.stopBy === "message";
+    if (!replying && cfg.dupCheck !== false && (nameHit || byText) && (await chatHasMessage(list, composer, cfg.template, row.name, cfg))) {
+      const counted = !thisRun && (byText || (cfg.stopBy === "both" && nameHit));
       return out(thisRun ? "SKIPPED" : "ALREADY", thisRun ? "Messaged earlier in this run" : "Already got this message" + (nameHit ? " (name and message)" : " (message)"), { id, counted });
     }
 

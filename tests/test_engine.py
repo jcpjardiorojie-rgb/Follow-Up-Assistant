@@ -410,19 +410,19 @@ def test_stop_by_name_and_message_needs_both(page):
     first = run(page, dailyCap=3)
     names = [e["name"] for e in first["log"] if e["status"] == "SENT"]
     page.evaluate("window.__t = null")
-    # Only 2 of the 3 names are known: the newest chat has the message, but not the name, so it doesn't count.
+    # Only 2 of the 3 names are on FollowUp's list: the third has the words, but FollowUp didn't send it to
+    # that name, so it isn't treated as already messaged.
     res = run(page, stopBy="both", stopAfter=3, names=names[:2], dailyCap=8)
     hits = already(res["log"])
-    assert [(e["name"], e["counted"]) for e in hits] == [(names[2], False), (names[1], True), (names[0], True)]
+    assert [(e["name"], e["counted"]) for e in hits] == [(names[1], True), (names[0], True)]
     assert res["states"][-1]["reason"].startswith("Daily limit")  # never 3 counted in a row, so it kept going
-    sent_ids = [s["id"] for s in mock(page)["sent"]]
-    assert len(sent_ids) == len(set(sent_ids))
 
 
 def test_off_still_never_sends_the_same_message_twice(page):
-    run(page, dailyCap=4)
+    first = run(page, dailyCap=4)
+    names = [e["name"] for e in first["log"] if e["status"] == "SENT"]
     page.evaluate("window.__t = null")
-    res = run(page, stopBy="off", dailyCap=3)
+    res = run(page, stopBy="off", dailyCap=3, names=names)
     assert len(already(res["log"])) == 4 and res["states"][-1]["reason"].startswith("Daily limit")
     sent_ids = [s["id"] for s in mock(page)["sent"]]
     assert len(sent_ids) == len(set(sent_ids)) == 7
@@ -460,3 +460,10 @@ def test_auto_reply_goes_only_to_people_who_wrote_last(page):
                        [{"key": sent[1]["key"], "name": sent[1]["name"]}, reply])
     assert r3["status"] == "SKIPPED"
     assert len(mock(page)["sent"]) == 3
+
+
+def test_old_broadcast_with_the_same_words_still_gets_the_follow_up(page):
+    # Every practice chat ends with an old "*GOOD NEWS!" broadcast that FollowUp never sent.
+    res = run(page, template="*GOOD NEWS! There's more to explore with our new package", order="bottom", dailyCap=5)
+    assert [e["status"] for e in res["log"]][:2] == ["SENT", "SENT"]  # starts at the bottom, no skipping up
+    assert not already(res["log"]) and len(mock(page)["sent"]) == 5
