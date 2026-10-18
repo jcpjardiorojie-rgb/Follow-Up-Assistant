@@ -56,7 +56,8 @@ def test_desktop_runs_with_real_input(app):
     trusted = page_eval(c, "__mock.trusted")
     assert trusted and all(trusted)
     # Progress was saved to disk
-    assert store.stats()["sent"] == 4 and len(store.campaign["doneIds"]) >= 6
+    # Sent chats are remembered; chats moved to Done are not (so a Done that failed is tried again)
+    assert store.stats()["sent"] == 4 and len(store.campaign["doneIds"]) == 4
     assert [r["status"] for r in store.recent_log()].count("SENT") == 4
     assert any(k == "log" for k, _ in events)
 
