@@ -461,8 +461,8 @@ def test_already_messaged_stop_notifies_and_saves_names_to_a_folder(ext):
         panel.click("#confirmYes")
         _set(panel, "#sCap", 20)
         panel.click("#start")
-        panel.wait_for_selector("#pill.finished", timeout=120_000)
-        assert "3 chats in a row already had this message" in panel.inner_text("#reason")
+        panel.wait_for_selector("#reason:has-text('3 chats in a row already had this message')", timeout=120_000)
+        assert panel.inner_text("#pill") == "Finished"
         assert len(inbox.evaluate("__mock.sent")) == 3  # nothing sent twice
         assert panel.locator("#log .st.ALREADY").count() == 3
         assert "already had this message" in sw.evaluate("self.__notes")[-1]["message"]

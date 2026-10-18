@@ -688,6 +688,9 @@
     // Open the chat and make sure it really is this person. Slow chats get a second try.
     const prevId = threadId();
     const alreadyOpen = headerHasName(row.name, list);
+    // Which of several identical rows (e.g. two "Facebook user" chats) this is, so the right one gets clicked.
+    const sameKey = () => getRows(list, cfg).filter((r) => r.key === row.key);
+    const occ = Math.max(0, sameKey().findIndex((r) => r.el === row.el));
     let opened = false;
     for (let tryOpen = 0; tryOpen < 2 && !opened; tryOpen++) {
       // Long inboxes only draw the rows on screen and redraw them while scrolling,
@@ -695,7 +698,8 @@
       let clicked = false;
       for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
         if (row.el.isConnected && (await bringIntoView(row.el, list))) await sleep(150);
-        const fresh = getRows(list, cfg).find((r) => r.key === row.key);
+        const cands = sameKey();
+        const fresh = cands.find((r) => r.el === row.el) || cands[occ] || cands[0];
         if (!fresh) return out("SKIPPED", "Chat left the list before it could be opened");
         row = fresh;
         try { await click(nameElementIn(row), hooks); clicked = true; }
