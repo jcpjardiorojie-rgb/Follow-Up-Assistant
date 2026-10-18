@@ -48,7 +48,17 @@
     // "top": newest first. "bottom": scroll to the very bottom first, then work upward.
     // "screen": start at the lowest chat visible right now (no scrolling down), then work upward.
     order: "top",
-    loadAllMaxMinutes: 30, // longest time spent scrolling to the bottom before starting
+    loadAllMaxMinutes: 30, // S4: longest time spent scrolling before giving up
+    // Scrolling settings (Settings → Scrolling)
+    scrollHow: "count", // S1: "all" (to the bottom), "count" (a number of scrolls), "chats" (about a number of chats)
+    scrollCount: 25,
+    scrollChats: 500,
+    scrollWaitSec: 1.5, // S2: pause after each scroll
+    unstickRetries: 2, // S3: "scroll up a little and back down" tries before deciding it's the bottom
+    buttonUsesScrollSettings: true, // S5: the "Scroll inbox to the bottom" button follows S1 too
+    // When the run finishes normally (not after Stop or a problem pause)
+    whenFinished: "nothing", // "nothing", "closeTab", "closeChrome" or "shutdown"
+    finishCountdownSec: 60,
     onlyIfLastFromMe: true, // skip chats where the customer wrote last
     moveSentToDone: false,
     testMode: false, // prepare everything but never press Send / Done
@@ -587,6 +597,11 @@
       why: "The “Add label” box wasn't found on the right side of the chat, or the label didn't show after adding it.",
       fix: "Add the label yourself in the chat's right panel (Labels → Add label). If it fails for every chat, send Claude a screenshot of the right panel.",
     },
+    SHUTDOWN_HELPER: {
+      what: "The run finished, but the computer couldn't be shut down.",
+      why: "Turning off the PC needs the small Windows helper, and it isn't installed (or Chrome can't reach it).",
+      fix: "Double-click windows\\Setup-FollowUp.bat once, then click ↻ on the extension at chrome://extensions. Settings → When finished → “Check shutdown helper” should then show ✓.",
+    },
     ERROR: {
       what: "Something unexpected went wrong on this chat, so nothing was sent.",
       why: "The page changed in a way the app didn't expect.",
@@ -761,8 +776,9 @@
       let failures = 0, emptyLoads = 0;
       this.setState("running");
       try {
-        if (cfg.order === "bottom") await this.scrollToBottomFirst();
-        const screen = cfg.order === "screen" ? await this.lowestOnScreen() : null;
+        let screen = null;
+        if (cfg.order === "bottom") screen = await this.scrollToBottomFirst();
+        if (cfg.order === "screen") screen = await this.lowestOnScreen();
         if (cfg.order === "screen" && !screen) return;
         for (;;) {
           await this.gate();
@@ -849,24 +865,39 @@
     }
 
     // Keeps scrolling the inbox down until no older chats load. Pause/Stop work during it.
+    // "Start from: Bottom": scrolls down as far as the Scrolling settings say, then the run works upward.
+    // Returns the chats that were loaded, so older chats that load in later stay out of this run.
     async scrollToBottomFirst() {
       const { cfg, hooks } = this;
+      const goal = scrollGoal(cfg, true);
       const end = Date.now() + cfg.loadAllMaxMinutes * 60000;
-      let still = 0;
-      while (still < 3) {
+      const seen = new Set(), known = new Set();
+      const note = (l) => { noteRows(l, cfg, seen); for (const r of getRows(l, cfg)) known.add(r.key); };
+      let still = 0, scrolls = 0, list = null;
+      for (;;) {
         await this.gate();
-        const list = findList(cfg);
+        list = findList(cfg);
         if (!list) { this.pause("Can't find the inbox list. Open Business Suite → Inbox, then press Resume."); continue; }
+        note(list);
         const grew = await loadMore(list, cfg);
+        scrolls++;
+        note(list);
         still = grew ? 0 : still + 1;
-        const n = getRows(list, cfg).length;
-        await hooks.state({ state: "running", reason: `Scrolling to the bottom of the inbox first… (${n} chats on screen)`, current: "" });
+        await hooks.state({ state: "running", reason: scrollProgress(goal, scrolls, seen.size, "Scrolling to the bottom first"), current: "" });
+        if (still >= 2) {
+          await hooks.state({ state: "running", reason: "Reached the bottom of the inbox. Sending from the bottom up." });
+          return null;
+        }
+        if (goalReached(goal, scrolls, seen.size)) {
+          await hooks.state({ state: "running", reason: `Scrolled ${scrolls} times (${seen.size} chats loaded). Sending from the lowest loaded chat, going up.` });
+          // Older chats that load in underneath later (when the list moves) stay out of this run.
+          return { belowOnly: new Set(), known, dropUnknownBelow: true };
+        }
         if (Date.now() > end) {
           await hooks.state({ state: "running", reason: `Scrolled for ${cfg.loadAllMaxMinutes} minutes without reaching the bottom; starting from the lowest chat loaded.` });
-          return;
+          return null;
         }
       }
-      await hooks.state({ state: "running", reason: "Reached the bottom of the inbox. Sending from the bottom up." });
     }
   }
 
@@ -880,6 +911,11 @@
     const keep = rows.map((r) => !screen.belowOnly.has(r.key));
     const firstBelow = rows.findIndex((r) => screen.belowOnly.has(r.key));
     if (firstBelow >= 0) rows.forEach((r, i) => { if (i > firstBelow && !screen.known.has(r.key)) keep[i] = false; });
+    if (screen.dropUnknownBelow) {
+      let lastKnown = -1;
+      rows.forEach((r, i) => { if (screen.known.has(r.key)) lastKnown = i; });
+      rows.forEach((r, i) => { if (i > lastKnown && !screen.known.has(r.key)) keep[i] = false; });
+    }
     return rows.filter((_, i) => keep[i]);
   }
 
@@ -895,18 +931,37 @@
     // Suite only keeps the rows near the screen, so that count changes just by scrolling.)
     const h = list.scrollHeight;
     const grew = () => list.scrollHeight > h + 5;
+    const pause = Math.max(0, (cfg.scrollWaitSec == null ? 1.5 : +cfg.scrollWaitSec) * 1000);
+    const retries = Math.max(0, Math.min(10, Math.round(cfg.unstickRetries == null ? 2 : +cfg.unstickRetries)));
+    const t0 = Date.now();
     list.scrollTop = list.scrollHeight;
-    if (await waitFor(grew, 3000, 250)) return true;
+    let ok = await waitFor(grew, Math.max(3000, pause), 250);
     // Business Suite sometimes stops loading older chats until the list moves. Do what a person
-    // does: scroll up a little, then back down, and wait again (twice, a bit further up the second time).
-    for (const up of [300, 700]) {
-      list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight - up);
+    // does: scroll up a little, then back down, and wait again (a bit further up each try).
+    for (let i = 0; !ok && i < retries; i++) {
+      list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight - (300 + 400 * i));
       await sleep(500);
       list.scrollTop = list.scrollHeight;
-      if (await waitFor(grew, 2500, 250)) return true;
+      ok = await waitFor(grew, 2500, 250);
     }
-    return false;
+    const left = pause - (Date.now() - t0);
+    if (ok && left > 0) await sleep(left); // "wait between scrolls"
+    return ok;
   }
+
+  // How far to scroll (S1). useLimits=false means "all the way to the bottom".
+  function scrollGoal(cfg, useLimits) {
+    if (!useLimits || cfg.scrollHow === "all") return { kind: "all" };
+    if (cfg.scrollHow === "chats") return { kind: "chats", n: Math.max(1, Math.round(+cfg.scrollChats || 1)) };
+    return { kind: "scrolls", n: Math.max(1, Math.round(+cfg.scrollCount || 1)) };
+  }
+  const goalReached = (goal, scrolls, chats) =>
+    (goal.kind === "scrolls" && scrolls >= goal.n) || (goal.kind === "chats" && chats >= goal.n);
+  function scrollProgress(goal, scrolls, chats, prefix) {
+    const what = goal.kind === "scrolls" ? `${scrolls} of ${goal.n} scrolls` : goal.kind === "chats" ? `${chats} of about ${goal.n} chats` : `${scrolls} scrolls`;
+    return `${prefix}… ${what} · ${chats} chats loaded`;
+  }
+  const noteRows = (list, cfg, seen) => { for (const r of getRows(list, cfg)) seen.add(r.key + "#" + r.name); };
 
   // ---------- tools for the buttons ----------
   // "Scroll inbox to the bottom" button. Runs in the background and can be paused,
@@ -915,9 +970,12 @@
   async function loadWholeInbox(cfg, onProgress, maxSeconds) {
     cfg = Object.assign({}, DEFAULTS, cfg || {});
     if (scrollJob.state !== "idle") return { ok: false, message: "Already scrolling" };
+    const goal = scrollGoal(cfg, cfg.buttonUsesScrollSettings);
+    const seen = new Set();
+    let scrolls = 0;
     const report = (state, message) => {
       scrollJob.state = state;
-      if (onProgress) try { onProgress({ state, rows: scrollJob.rows, message }); } catch (_) {}
+      if (onProgress) try { onProgress({ state, rows: scrollJob.rows, chats: seen.size, scrolls, message }); } catch (_) {}
     };
     Object.assign(scrollJob, { paused: false, cancel: false, rows: 0 });
     report("running", "Scrolling the inbox down…");
@@ -926,28 +984,38 @@
     try {
       for (;;) {
         if (scrollJob.paused && !scrollJob.cancel) {
-          report("paused", `Scrolling paused (${scrollJob.rows} chats on screen)`);
+          report("paused", `Scrolling paused (${seen.size} chats loaded)`);
           const t0 = Date.now();
           while (scrollJob.paused && !scrollJob.cancel) await sleep(200);
           end += Date.now() - t0; // paused time doesn't count toward the time limit
           if (!scrollJob.cancel) report("running", "Scrolling the inbox down…");
         }
         if (scrollJob.cancel) { result = { ok: true, reachedEnd: false, message: "Scrolling stopped" }; break; }
-        if (still >= 3) { result = { ok: true, reachedEnd: true, message: "Reached the bottom of the inbox" }; break; }
+        if (still >= 2) { result = { ok: true, reachedEnd: true, message: "Reached the bottom of the inbox" }; break; }
+        if (goalReached(goal, scrolls, seen.size)) {
+          result = { ok: true, reachedEnd: false, reachedGoal: true,
+            message: goal.kind === "scrolls" ? `Scrolled ${scrolls} times` : `Loaded about ${goal.n} chats` };
+          break;
+        }
         if (Date.now() > end) { result = { ok: true, reachedEnd: false, message: "Stopped before the bottom (time limit)" }; break; }
         const list = findList(cfg);
         if (!list) { result = { ok: false, reachedEnd: false, message: "Can't find the inbox list" }; break; }
+        noteRows(list, cfg, seen);
         const grew = await loadMore(list, cfg);
+        scrolls++;
+        noteRows(list, cfg, seen);
         still = grew ? 0 : still + 1;
         scrollJob.rows = getRows(list, cfg).length;
-        if (!scrollJob.paused && !scrollJob.cancel) report("running", `Scrolling the inbox down… (${scrollJob.rows} chats on screen)`);
+        if (!scrollJob.paused && !scrollJob.cancel) report("running", scrollProgress(goal, scrolls, seen.size, "Scrolling the inbox down"));
       }
     } catch (e) {
       result = { ok: false, reachedEnd: false, message: "Error: " + (e && e.message ? e.message : e) };
     }
     result.rows = scrollJob.rows;
+    result.chats = seen.size;
+    result.scrolls = scrolls;
     report("idle", result.message);
-    if (onProgress) try { onProgress({ state: "done", rows: result.rows, message: result.message, reachedEnd: result.reachedEnd }); } catch (_) {}
+    if (onProgress) try { onProgress({ state: "done", rows: result.rows, chats: result.chats, scrolls, message: result.message, reachedEnd: result.reachedEnd }); } catch (_) {}
     return result;
   }
   function pauseScroll() { if (scrollJob.state === "running") { scrollJob.paused = true; return true; } return false; }

@@ -340,3 +340,39 @@ def test_moves_to_the_next_chat_with_a_small_scroll(page):
     moved = page.evaluate("document.querySelector('#list').scrollTop")
     assert 0 < moved <= 64 + 12 + 2  # one row's height at most, not half a screen
     assert page.evaluate("__mock.selected.name") == target["name"]
+
+
+def test_scroll_settings_count_chats_retries_and_button(page):
+    tool = "(c) => FollowUpEngine.tools.loadWholeInbox(c, null, 60)"
+    # S1 a number of scrolls: 1 scroll loads one more batch (12 → 18) and stops
+    r = page.evaluate(tool, {"scrollHow": "count", "scrollCount": 1, "scrollWaitSec": 0})
+    assert r["reachedGoal"] and r["scrolls"] == 1 and r["message"] == "Scrolled 1 times"
+    assert page.evaluate("__mock.loaded") == 18
+    page.reload(); page.evaluate(__import__("conftest").ENGINE_JS)
+    # S1 about a number of chats
+    r = page.evaluate(tool, {"scrollHow": "chats", "scrollChats": 15, "scrollWaitSec": 0})
+    assert r["reachedGoal"] and r["chats"] >= 15 and page.evaluate("__mock.loaded") == 18
+    page.reload(); page.evaluate(__import__("conftest").ENGINE_JS)
+    # S5 off: the button ignores the scroll count and goes all the way
+    r = page.evaluate(tool, {"scrollHow": "count", "scrollCount": 1, "scrollWaitSec": 0, "buttonUsesScrollSettings": False})
+    assert r["reachedEnd"] and r["rows"] == 22
+    page.reload(); page.evaluate(__import__("conftest").ENGINE_JS)
+    # S3 with no unstick retries, a list that gets stuck looks like the bottom
+    page.evaluate("__mock.flags.sticky = true")
+    r = page.evaluate(tool, {"scrollHow": "all", "scrollWaitSec": 0, "unstickRetries": 0})
+    assert r["reachedEnd"] and page.evaluate("__mock.loaded") < 22
+    page.reload(); page.evaluate(__import__("conftest").ENGINE_JS)
+    # S2 wait between scrolls slows each scroll down
+    import time
+    t = time.time()
+    page.evaluate(tool, {"scrollHow": "count", "scrollCount": 2, "scrollWaitSec": 2})
+    assert time.time() - t >= 3.8
+
+
+def test_bottom_with_a_scroll_count_sends_from_the_lowest_loaded_chat_up(page):
+    res = run(page, order="bottom", scrollHow="count", scrollCount=1, scrollWaitSec=0, dailyCap=2)
+    m = mock(page)
+    assert any("1 of 1 scrolls" in s.get("reason", "") for s in res["states"])
+    assert any(s.get("reason", "").startswith("Scrolled 1 times") for s in res["states"])
+    # 18 chats were loaded; it starts at the 18th and goes up (Deii Diesel wrote last, so skipped)
+    assert [s["name"] for s in m["sent"]] == ["Carla JR Tauedea Vada", "Zner Naapmac"]

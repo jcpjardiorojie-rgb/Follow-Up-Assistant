@@ -13,7 +13,7 @@ There are two versions so you can compare them. Both use the same "brain"
 | Install | Load one folder into Chrome (2 minutes) | Install Python once, then `install.bat` |
 | Uses | Your normal Chrome and your normal login | A separate Chrome profile (log in once) |
 | Clicks & typing | In-page events | Real mouse/keyboard input from Playwright |
-| While it runs | **Keep the Business Suite window visible** (not minimized). Chrome slows down hidden tabs. | Keeps running even when the window is behind other windows |
+| While it runs | Open Chrome with the **FollowUp Chrome** desktop icon (see below) so it keeps going after Alt+Tab. Don't minimize it. | Keeps running even when the window is behind other windows |
 | Shows Meta it's automated? | Less visibly | Chrome shows "controlled by automated test software", and the browser reports it is automated |
 
 ![Option A side panel](docs/screenshots/option-a-side-panel.png)
@@ -63,6 +63,45 @@ Safety rules built into both versions:
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
    by mistake. The badge at the top says **Ready** when it's connected.
 
+## Option A: keep running after Alt+Tab, and shut down when done (Windows, one-time setup)
+
+Normal Chrome slows down a tab you can't see, so sending stops when you Alt+Tab away. The **FollowUp Chrome**
+icon opens your normal Chrome (same profile, same login) with three switches that turn that slowing off.
+
+1. In the `windows` folder, double-click **`Setup-FollowUp.bat`**. If Windows says "Windows protected your PC",
+   click **More info → Run anyway**. It:
+   * puts a **FollowUp Chrome** icon on your desktop, and
+   * installs a small helper that lets the extension shut down the PC (Chrome can't do that by itself).
+2. Open `chrome://extensions` and click ↻ on FollowUp Copilot.
+3. From now on, open Chrome with the **FollowUp Chrome** icon when you follow up. If Chrome is already open, it
+   asks to close it first (the switches only work on a fresh start). Minimizing the window can still pause it;
+   another window on top is fine.
+4. **Settings → When the run is finished**: Do nothing / Close the Business Suite tab / Close Chrome /
+   **Shut down the computer**. Press **Check shutdown helper**: it should say ✓. When a run finishes normally
+   (daily limit reached or no more chats, never after Stop or a problem pause) a countdown with **Cancel** and
+   **Do it now** shows on the page and in the side panel (60 seconds by default).
+
+To remove both: double-click `windows\Uninstall-FollowUp.bat`.
+
+![When finished](docs/screenshots/option-a-when-finished.png)
+
+![Countdown](docs/screenshots/option-a-finish-countdown.png)
+
+### Scrolling settings
+
+**Settings → Scrolling** decides how far **Start from: Bottom** scrolls before it starts sending:
+
+| Setting | Default | What it does |
+|---|---|---|
+| How far | A set number of scrolls | Or "until about N chats are loaded", or "all the way to the bottom" |
+| Number of scrolls | 25 | Then it starts the follow-up right away from the lowest chat it loaded, going up |
+| Wait between scrolls | 1.5 sec | Raise it if your internet is slow |
+| If stuck: scroll up & retry | 2 times | Before deciding it reached the bottom |
+| Give up scrolling after | 30 min | Then it starts sending from where it got to |
+| The button uses these too | Yes | "Scroll inbox to the bottom" stops at the same place |
+
+![Scroll settings](docs/screenshots/option-a-scroll-settings.png)
+
 ## Option B: install the Windows app
 
 1. Install Python from <https://www.python.org/downloads/windows/>. **Tick "Add python.exe to PATH".**
@@ -87,8 +126,8 @@ Safety rules built into both versions:
 5. When that works, raise the limit.
 
 **To send from the bottom of the inbox going up:** in Settings choose **Start from: Bottom**.
-When you press Start, the app first scrolls the inbox all the way down until no older chats load
-(you'll see "Scrolling to the bottom of the inbox first… (N chats)"). Then it messages the bottom chat
+When you press Start, the app first scrolls the inbox down as far as **Settings → Scrolling** says (25 scrolls by
+default; you'll see "Scrolling to the bottom first… N of 25 scrolls"). Then it messages the lowest loaded chat
 first and works upward to the top. Chats you message jump to the top of Business Suite's list, and the
 app remembers them, so they're never messaged twice. Stop and Pause work while it scrolls.
 
@@ -141,7 +180,7 @@ If you install both versions, give them different keys so one key press doesn't 
 | Seconds between chats | Pause after each sent message |
 | Wait after opening a chat | Time for the chat to load before reading it. Raise it if your internet is slow. |
 | Daily limit | Stops after this many sends today |
-| Start from | **Top**: newest first. **Bottom**: scrolls down to the oldest chat automatically, then goes up. **Lowest chat on screen**: starts at the bottom chat you can see right now (no scrolling down), goes up, and leaves the chats below it alone |
+| Start from | **Top**: newest first. **Bottom**: scrolls down first (see Scrolling settings), then goes up. **Lowest chat on screen**: starts at the bottom chat you can see right now (no scrolling down), goes up, and leaves the chats below it alone |
 | Only follow up when the last message is mine | Skips people who replied to you, so you can answer them personally |
 | Move chats to Done after sending | Also moves successfully messaged chats to Done |
 | Don't send if the image fails to attach | Skips that chat instead of sending text only |
@@ -209,8 +248,9 @@ list ("You: …"). If it can't see it but the message box emptied and Meta showe
 
 ```
 extension/        Option A: Manifest V3 extension (engine.js, content.js, side panel)
+windows/          Option A on Windows: FollowUp Chrome launcher + shutdown helper (native messaging host)
 desktop/          Option B: tkinter window (followup_desk.py), Playwright controller (bridge.py), shortcuts (hotkeys.py)
-tests/            practice inbox + 22 automated tests (engine, extension, desktop controller, desktop window, shortcuts)
+tests/            practice inbox + automated tests (engine, extension, desktop controller, desktop window, shortcuts)
 ```
 
 Run the tests (Python 3.10+):

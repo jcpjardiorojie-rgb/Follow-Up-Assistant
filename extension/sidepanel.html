@@ -73,6 +73,11 @@
   <div id="reason" class="reason">Press Start when your Inbox is open.</div>
   <button id="seeProblems" class="small" hidden>See what went wrong and how to fix it →</button>
   <div id="current" class="current"></div>
+  <div id="finishBar" class="finishbar" hidden>
+    <span id="finishText">In 60 s: shut down the computer</span>
+    <button id="finishCancel" class="primary">Cancel</button>
+    <button id="finishNow" class="small">Do it now</button>
+  </div>
   <div class="controls">
     <button id="start" class="primary">Start</button>
     <button id="pause">Pause</button>
@@ -114,12 +119,43 @@
     <label>Seconds between chats<input id="sBetween" type="number" min="0" step="1"></label>
     <label>Wait after opening a chat (sec)<input id="sStep" type="number" min="0.3" step="0.1"></label>
     <label>Daily limit<input id="sCap" type="number" min="1" step="1"></label>
-    <label>Start from<select id="sOrder"><option value="top">Top (newest first)</option><option value="bottom">Bottom (scrolls down first, then goes up)</option><option value="screen">Lowest chat on screen now (no scrolling), then up</option></select></label>
+    <label>Start from<select id="sOrder"><option value="top">Top (newest first)</option><option value="bottom">Bottom: scroll down first (see Scrolling), then go up</option><option value="screen">Lowest chat on screen now (no scrolling), then up</option></select></label>
   </div>
   <label class="check"><input id="sLastMine" type="checkbox"> Only follow up when the last message is mine <span class="hint">(skips customers who replied)</span></label>
   <label class="check"><input id="sSentDone" type="checkbox"> Move chats to Done after sending</label>
   <label class="check"><input id="sImgReq" type="checkbox"> Don't send if the image fails to attach</label>
   <label class="check test"><input id="sTest" type="checkbox"> Test mode: fill the message box, but never press Send or Done</label>
+  <fieldset class="group" id="scrollBox">
+    <legend>Scrolling</legend>
+    <label class="hint" for="scHow">How far to scroll before sending (used by Start from: Bottom)</label>
+    <select id="scHow" class="field">
+      <option value="count">A set number of scrolls</option>
+      <option value="chats">Until about a number of chats are loaded</option>
+      <option value="all">All the way to the bottom</option>
+    </select>
+    <div class="grid">
+      <label>Number of scrolls<input id="scCount" type="number" min="1" step="1"></label>
+      <label>About how many chats<input id="scChats" type="number" min="1" step="10"></label>
+      <label>Wait between scrolls (sec)<input id="scWait" type="number" min="0" step="0.1"></label>
+      <label>If stuck: scroll up &amp; retry (times)<input id="scRetry" type="number" min="0" max="10" step="1"></label>
+      <label>Give up scrolling after (min)<input id="scMax" type="number" min="1" step="1"></label>
+    </div>
+    <label class="check"><input id="scButton" type="checkbox"> The “Scroll inbox to the bottom” button uses these settings too</label>
+    <p class="hint">For no scrolling at all, choose Start from: Lowest chat on screen.</p>
+  </fieldset>
+  <fieldset class="group" id="finishBox">
+    <legend>When the run is finished</legend>
+    <div class="radios">
+      <label class="check"><input type="radio" name="whenFinished" value="nothing"> Do nothing</label>
+      <label class="check"><input type="radio" name="whenFinished" value="closeTab"> Close the Business Suite tab</label>
+      <label class="check"><input type="radio" name="whenFinished" value="closeChrome"> Close Chrome</label>
+      <label class="check"><input type="radio" name="whenFinished" value="shutdown"> Shut down the computer <span class="hint">(needs the Windows helper)</span></label>
+    </div>
+    <div class="grid"><label>Countdown before it happens (sec)<input id="fiSecs" type="number" min="10" step="5"></label></div>
+    <div class="row"><button id="fiCheck" class="small">Check shutdown helper</button><span id="fiStatus" class="hint"></span></div>
+    <p class="hint">Only after a normal finish (daily limit, or no more chats), never after Stop or a problem pause.
+      A countdown with Cancel shows on the Business Suite page first.</p>
+  </fieldset>
   <details class="adv">
     <summary>Advanced: words the app looks for</summary>
     <label>"Can't message" banner text (one per line)<textarea id="aBlocked" rows="2"></textarea></label>

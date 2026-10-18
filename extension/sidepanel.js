@@ -11,6 +11,8 @@ const DEF = {
   stepDelayMs: 1200, betweenChatsSec: 8, dailyCap: 300, inboxUrl: "",
   hotWords: FollowUpEngine.DEFAULTS.hotWords, warmWords: FollowUpEngine.DEFAULTS.warmWords,
   coldWords: FollowUpEngine.DEFAULTS.coldWords, labelName: "Hot lead", autoLabel: true,
+  scrollHow: "count", scrollCount: 25, scrollChats: 500, scrollWaitSec: 1.5, unstickRetries: 2, loadAllMaxMinutes: 30,
+  buttonUsesScrollSettings: true, whenFinished: "nothing", finishCountdownSec: 60,
 };
 const BAD = new Set(["FAILED", "REVIEW", "UNKNOWN"]);
 let settings = {}, template = {}, templates = [], contacts = {}, tabId = null, state = "idle", scrollState = "idle";
@@ -56,6 +58,16 @@ function fillForm() {
   $("aWarm").value = settings.warmWords.join("\n");
   $("aCold").value = settings.coldWords.join("\n");
   $("bAuto").checked = settings.autoLabel;
+  $("scHow").value = settings.scrollHow;
+  $("scCount").value = settings.scrollCount;
+  $("scChats").value = settings.scrollChats;
+  $("scWait").value = settings.scrollWaitSec;
+  $("scRetry").value = settings.unstickRetries;
+  $("scMax").value = settings.loadAllMaxMinutes;
+  $("scButton").checked = settings.buttonUsesScrollSettings;
+  for (const r of document.querySelectorAll("input[name=whenFinished]")) r.checked = r.value === settings.whenFinished;
+  $("fiSecs").value = settings.finishCountdownSec;
+  showScrollFields();
   $("bLabelName").value = settings.labelName;
   $("cCap").textContent = "of " + settings.dailyCap;
   $("fbName").textContent = settings.fallbackName;
@@ -78,6 +90,17 @@ function readSettings() {
   settings.warmWords = lines($("aWarm").value);
   settings.coldWords = lines($("aCold").value);
   settings.autoLabel = $("bAuto").checked;
+  settings.scrollHow = $("scHow").value;
+  settings.scrollCount = Math.max(1, Math.round(+$("scCount").value || 25));
+  settings.scrollChats = Math.max(1, Math.round(+$("scChats").value || 500));
+  settings.scrollWaitSec = Math.max(0, +$("scWait").value || 0);
+  settings.unstickRetries = Math.min(10, Math.max(0, Math.round(+$("scRetry").value || 0)));
+  settings.loadAllMaxMinutes = Math.max(1, Math.round(+$("scMax").value || 30));
+  settings.buttonUsesScrollSettings = $("scButton").checked;
+  const wf = document.querySelector("input[name=whenFinished]:checked");
+  settings.whenFinished = wf ? wf.value : "nothing";
+  settings.finishCountdownSec = Math.max(10, Math.round(+$("fiSecs").value || 60));
+  showScrollFields();
   settings.labelName = $("bLabelName").value.trim() || DEF.labelName;
   $("cCap").textContent = "of " + settings.dailyCap;
   saveSettings();
@@ -123,7 +146,7 @@ $("imgFile").addEventListener("change", () => {
 });
 $("imgRemove").addEventListener("click", () => { template.imageDataUrl = ""; template.imageName = ""; saveTemplate(); showImage(); });
 for (const id of ["sBetween", "sStep", "sCap", "sOrder", "sLastMine", "sSentDone", "sImgReq", "sTest", "aBlocked", "aNames", "aStop",
-  "aHot", "aWarm", "aCold", "bAuto", "bLabelName"]) {
+  "aHot", "aWarm", "aCold", "bAuto", "bLabelName", "scHow", "scCount", "scChats", "scWait", "scRetry", "scMax", "scButton", "fiSecs"]) {
   $(id).addEventListener("change", readSettings);
 }
 $("aReset").addEventListener("click", () => {
@@ -206,10 +229,44 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.progress) { $("toolOut").hidden = false; $("toolOut").textContent = msg.progress; }
   if (msg.scroll) showScroll(msg.scroll);
   if (msg.buyers) buyersBusy(msg.buyers.state !== "done", msg.buyers.message);
+  if (msg.finish) showFinish(msg.finish);
 });
 chrome.storage.onChanged.addListener((ch) => {
   if (ch.campaign) $("remembered").textContent = `${(ch.campaign.newValue && ch.campaign.newValue.doneIds.length) || 0} chats remembered in this campaign`;
 });
+
+// ---------- Scrolling and "When the run is finished" ----------
+function showScrollFields() {
+  const how = $("scHow").value;
+  $("scCount").closest("label").hidden = how !== "count";
+  $("scChats").closest("label").hidden = how !== "chats";
+}
+for (const r of document.querySelectorAll("input[name=whenFinished]")) r.addEventListener("change", readSettings);
+$("fiCheck").addEventListener("click", async () => {
+  const el = $("fiStatus");
+  el.className = "hint"; el.textContent = "Checking…";
+  try {
+    const r = await chrome.runtime.sendNativeMessage("com.rojie.followup_copilot", { action: "ping" });
+    el.className = r && r.ok ? "good" : "bad";
+    el.textContent = r && r.ok ? "✓ Shutdown helper installed" : "✗ The helper answered with an error";
+  } catch (_) {
+    el.className = "bad";
+    el.textContent = "✗ Not installed. Double-click windows\\Setup-FollowUp.bat, then click ↻ on the extension.";
+  }
+});
+function showFinish(f) {
+  const bar = $("finishBar");
+  if (f.cancelled || f.done || f.failed) {
+    bar.hidden = true;
+    if (f.cancelled) $("reason").textContent = "Cancelled. Nothing will be closed or shut down.";
+    if (f.failed) $("reason").textContent = f.message + " See the Problems tab.";
+    return;
+  }
+  bar.hidden = false;
+  $("finishText").textContent = f.text;
+}
+$("finishCancel").addEventListener("click", () => send("cancelFinish"));
+$("finishNow").addEventListener("click", () => send("finishNow"));
 
 // ---------- tabs and the Problems list ----------
 function showTab(which) {

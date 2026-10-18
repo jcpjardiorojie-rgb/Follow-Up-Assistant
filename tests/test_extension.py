@@ -287,3 +287,110 @@ def test_tools_work_while_running_or_paused(ext):
     panel.wait_for_selector("#pill.running", timeout=10_000)
     panel.click("#stop")
     panel.wait_for_selector("#pill.stopped", timeout=60_000)
+
+
+def _quick_run_settings(panel, cap):
+    panel.fill("#tplText", "Hi {first_name}!")
+    if not panel.is_visible("#sCap"):
+        panel.click("#settingsBox summary")
+    for sel, val in (("#sBetween", "0"), ("#sStep", "0.3"), ("#sCap", str(cap)), ("#fiSecs", "10")):
+        panel.fill(sel, val)
+        panel.dispatch_event(sel, "change")
+
+
+def test_scroll_settings_and_when_finished_countdown(ext):
+    inbox, panel, sw = ext
+    panel.click("#settingsBox summary")
+    panel.check("input[name=whenFinished][value=shutdown]")
+    assert panel.input_value("#fiSecs") == "60"
+    panel.locator("#finishBox").screenshot(path=str(SHOTS / "option-a-when-finished.png"))
+    _quick_run_settings(panel, 2)
+    # Scrolling settings: only the box that fits the choice is shown
+    assert panel.input_value("#scHow") == "count" and panel.input_value("#scCount") == "25"
+    assert panel.is_visible("#scCount") and not panel.is_visible("#scChats")
+    panel.select_option("#scHow", "chats")
+    assert panel.is_visible("#scChats") and not panel.is_visible("#scCount")
+    panel.select_option("#scHow", "count")
+    panel.locator("#scrollBox").screenshot(path=str(SHOTS / "option-a-scroll-settings.png"))
+
+    # Countdown after a normal finish; Cancel stops it
+    panel.check("input[name=whenFinished][value=closeTab]")
+    panel.click("#start")
+    inbox.wait_for_selector("#fu-finish", timeout=120_000)
+    panel.wait_for_selector("#finishBar:not([hidden])")
+    assert "close the Business Suite tab" in inbox.inner_text("#fu-finish")
+    inbox.screenshot(path=str(SHOTS / "option-a-finish-countdown.png"))
+    panel.click("#finishCancel")
+    inbox.wait_for_selector("#fu-finish", state="detached")
+    panel.wait_for_selector("#finishBar[hidden]", state="attached")
+    assert "Cancelled" in panel.inner_text("#reason")
+
+    # Shut down without the Windows helper: nothing breaks, the Problems tab explains the fix
+    panel.check("input[name=whenFinished][value=shutdown]")
+    panel.fill("#sCap", "3")
+    panel.dispatch_event("#sCap", "change")
+    panel.click("#start")
+    inbox.wait_for_selector("#fu-finish", timeout=120_000)
+    inbox.click("#fu-finish-now")
+    panel.wait_for_selector("#reason:has-text('couldn')", timeout=10_000)
+    panel.click("#tabProblems")
+    assert "Setup-FollowUp.bat" in panel.inner_text("#problems")
+    panel.click("#tabMain")
+    panel.click("#fiCheck")
+    panel.wait_for_selector("#fiStatus:has-text('Not installed')")
+
+    # Close the tab: "Do it now" closes the Business Suite tab
+    panel.check("input[name=whenFinished][value=closeTab]")
+    panel.fill("#sCap", "4")
+    panel.dispatch_event("#sCap", "change")
+    panel.click("#start")
+    inbox.wait_for_selector("#fu-finish", timeout=120_000)
+    with inbox.expect_event("close", timeout=10_000):
+        inbox.click("#fu-finish-now")
+
+
+FAKE_HOST = r'''#!/usr/bin/env python3
+import json, struct, sys
+n = struct.unpack("<I", sys.stdin.buffer.read(4))[0]
+msg = json.loads(sys.stdin.buffer.read(n))
+with open(LOG, "a") as f:
+    f.write(json.dumps(msg) + "\n")
+out = json.dumps({"ok": True, "action": msg.get("action")}).encode()
+sys.stdout.buffer.write(struct.pack("<I", len(out)) + out)
+sys.stdout.buffer.flush()
+'''
+
+
+def test_shutdown_helper_is_called_when_installed(pw):
+    import json
+    import sys
+    with tempfile.TemporaryDirectory() as profile, tempfile.TemporaryDirectory() as tools:
+        log = pathlib.Path(tools) / "calls.log"
+        host = pathlib.Path(tools) / "host.py"
+        host.write_text(f"#!{sys.executable}\nLOG = {str(log)!r}\n" + FAKE_HOST.split("\n", 1)[1])
+        host.chmod(0o755)
+        ctx = pw.chromium.launch_persistent_context(
+            profile, channel="chromium", headless=True,
+            args=[f"--disable-extensions-except={EXT}", f"--load-extension={EXT}"])
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker")
+        ext_id = sw.url.split("/")[2]
+        hosts = pathlib.Path(profile) / "NativeMessagingHosts"
+        hosts.mkdir(exist_ok=True)
+        (hosts / "com.rojie.followup_copilot.json").write_text(json.dumps({
+            "name": "com.rojie.followup_copilot", "description": "test", "path": str(host),
+            "type": "stdio", "allowed_origins": [f"chrome-extension://{ext_id}/"]}))
+        panel = ctx.new_page()
+        panel.goto(f"chrome-extension://{ext_id}/sidepanel.html")
+        panel.click("#settingsBox summary")
+        panel.click("#fiCheck")
+        panel.wait_for_selector("#fiStatus:has-text('installed')", timeout=15_000)
+        assert "✓" in panel.inner_text("#fiStatus")
+        r = sw.evaluate("finishAction('shutdown')")
+        assert r == {"ok": True}
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        assert calls[0] == {"action": "ping"}
+        assert calls[1] == {"action": "shutdown", "delaySec": 10}
+        try:
+            ctx.close()
+        except Exception:
+            pass  # the extension closes Chrome itself after asking for the shutdown

@@ -135,3 +135,11 @@ h1 .by { font-size: 12px; font-weight: 500; color: var(--muted); white-space: no
 .lab { font-size: 11px; color: var(--good); }
 .lab.bad { color: var(--bad); }
 @media (prefers-color-scheme: dark) { .kind.hot { background: #3d2010; color: #ffb38a; } .k-hot b { color: #ff9a5c; } }
+.group { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 10px; display: grid; gap: 7px; margin: 0; }
+.group legend { font-weight: 600; padding: 0 4px; }
+.radios { display: grid; gap: 4px; }
+.finishbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; background: var(--bad-soft); color: var(--bad); border-radius: 7px; padding: 6px 8px; font-weight: 600; }
+.finishbar[hidden] { display: none; }
+.finishbar span { flex: 1; min-width: 140px; }
+#fiStatus.good { color: var(--good); } #fiStatus.bad { color: var(--bad); }
+.grid label[hidden] { display: none; }
