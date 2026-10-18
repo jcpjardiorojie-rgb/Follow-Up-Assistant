@@ -63,6 +63,67 @@ Safety rules built into both versions:
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
    by mistake. The badge at the top says **Ready** when it's connected.
 
+## New in 1.7.0 (extension)
+
+### Stop when it reaches people who already got this message
+
+Chats you message jump to the top of the inbox. So when a run reaches chats that already have this message,
+it has reached the people from your last run, and everything above is done. **Settings → Already messaged:**
+
+| Setting | Default | What it does |
+|---|---|---|
+| Don't send if this message is already in the chat | On | Never sends the same message twice, whatever else you choose. Shows **ALREADY** in Activity. |
+| Stop by name and message | ✓ default | Counts a chat only when the name is on this message's list *and* the message is in the chat (safest) |
+| Stop by message | | Reads the chat. Also catches messages you sent by hand or from another PC. |
+| Stop by name | | Decides from the inbox list without opening the chat (fastest) |
+| Don't stop, just skip them | | Goes on to the end of the inbox |
+| Stop after this many in a row | 3 | One stray chat doesn't stop the run early. A newly sent chat starts the count again. Chats messaged earlier in the same run never count. |
+
+When it stops this way, **When the run is finished** runs (for example the shutdown countdown).
+The checks add almost no time: the name check reads the list, and the message check reads the chat the app
+opens anyway.
+
+**Names list per saved message.** Each saved message keeps its own list of who got it. **New campaign**
+doesn't erase it (use **Clear names** under the message if you want to). With **Also save the names to a folder
+on this PC** (default `D:\FollowUp-History`), the Windows helper writes one Excel-friendly file per message
+plus `runs.csv` (one line per run), every 25 sends and at the end of each run. If Chrome ever loses its copy,
+the names are loaded back from that folder. **Run `windows\Setup-FollowUp.bat` again once** to update the helper.
+
+![Already messaged](docs/screenshots/option-a-already-messaged.png)
+
+![Stopped](docs/screenshots/option-a-stopped-already.png)
+
+### Tell me when it's done (PC and phone)
+
+**Settings → When the run is finished → Tell me when it's done:**
+
+* **Windows pop-up with sound**: on by default.
+* **My phone**: install the free **ntfy** app (Play Store / App Store), tap **+**, type a private topic name only
+  you know, type the same name in Settings, then press **Send test notification**. Works even after the PC shuts down.
+* **Also when a run pauses because of a problem**: on by default.
+
+![Notifications](docs/screenshots/option-a-notify.png)
+
+### Auto-replies to people who answer your follow-up (Buyers tab)
+
+After **Check replies**, people who answered your follow-up get the reply for their type:
+🔥 Hot, 🙂 Warm, ❄️ Not interested, 💬 Other. Each has its own text (with `{first_name}`) and image, and can be
+turned off. Hot and Warm are on, with example texts to edit; Not interested and Other are off.
+
+* **Ask me first**: the replies wait under **Ready to send**. Press **Skip** on any you don't want, then **Send all**.
+* **Send automatically**: they go out right after the check.
+* **Also check by itself every N minutes** while the inbox tab is open. If a follow-up run is going, it pauses
+  after its current chat, answers, puts the inbox back where it was, and continues. Before a shutdown it does one
+  last round.
+* Nobody gets an auto-reply twice, and nobody you already answered yourself (if your message is the last one, it's skipped).
+
+![Auto-replies](docs/screenshots/option-a-auto-replies.png)
+
+### "Facebook user" fix
+
+"Facebook user" and "can't message" chats are now always moved to Done while they're still in the inbox. Before,
+if a Done click didn't work, the chat was written down as handled and skipped on every later run.
+
 ## Option A: keep running after Alt+Tab, and shut down when done (Windows, one-time setup)
 
 Normal Chrome slows down a tab you can't see, so sending stops when you Alt+Tab away. The **FollowUp Chrome**
