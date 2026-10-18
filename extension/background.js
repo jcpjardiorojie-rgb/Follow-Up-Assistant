@@ -46,3 +46,44 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   finishAction(msg.action, sender.tab && sender.tab.id).then(reply, (e) => reply({ ok: false, message: String(e && e.message || e) }));
   return true;
 });
+
+// Notifications: a Windows pop-up (with its sound) and/or a phone notification through ntfy.
+async function notifyAll({ title, message, pc, phone, topic, server }) {
+  const out = { ok: true };
+  if (pc) {
+    try {
+      await chrome.notifications.create("fu-" + Date.now(), { type: "basic", iconUrl: "icons/icon128.png", title, message,
+        priority: 2, requireInteraction: true });
+      out.pcOk = true;
+    } catch (e) { out.pcOk = false; out.error = String(e && e.message || e); }
+  }
+  if (phone) {
+    const t = String(topic || "").trim();
+    if (!t) { out.phoneOk = false; out.error = "No ntfy topic set"; }
+    else {
+      try {
+        const r = await fetch(String(server || "https://ntfy.sh").replace(/\/+$/, "") + "/" + encodeURIComponent(t), {
+          method: "POST", body: message, headers: { Title: title.replace(/[^\x20-\x7e]/g, ""), Tags: "speech_balloon" } });
+        out.phoneOk = r.ok;
+        if (!r.ok) out.error = "ntfy answered " + r.status;
+      } catch (e) { out.phoneOk = false; out.error = String(e && e.message || e); }
+    }
+  }
+  out.ok = out.pcOk !== false && out.phoneOk !== false;
+  return out;
+}
+self.notifyAll = notifyAll; // used by the automated tests
+
+// Saving names to a folder on your PC goes through the same Windows helper as the shutdown.
+async function fileAction(msg) {
+  const { type, ...req } = msg;
+  try {
+    const r = await chrome.runtime.sendNativeMessage(HELPER, req);
+    return r || { ok: false, error: "The helper didn't answer" };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (!msg || (msg.type !== "fu-notify" && msg.type !== "fu-file")) return;
+  (msg.type === "fu-notify" ? notifyAll(msg) : fileAction(msg)).then(reply, (e) => reply({ ok: false, error: String(e && e.message || e) }));
+  return true;
+});

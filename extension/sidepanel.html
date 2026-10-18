@@ -43,6 +43,22 @@
     <p class="hint">Check replies reads your inbox list (it doesn't open chats). It sorts people you followed up by
       what they wrote back. Change the words it looks for in Settings → Advanced.</p>
   </section>
+  <section class="card" id="replyCard">
+    <h2>Auto-replies</h2>
+    <p class="hint">After Check replies, people who answered your follow-up get the reply for their type.
+      Nobody gets one twice, and nobody you already answered yourself.</p>
+    <div class="radios">
+      <label class="check"><input type="radio" name="replyMode" value="ask"> Ask me first <span class="hint">(I check the list, then press Send all)</span></label>
+      <label class="check"><input type="radio" name="replyMode" value="auto"> Send automatically</label>
+    </div>
+    <label class="check"><input id="rAuto" type="checkbox"> Also check by itself every
+      <input id="rMins" type="number" min="2" step="1" class="mini" aria-label="Minutes"> minutes while the inbox tab is open</label>
+    <div id="pendingBox" class="pendingbox" hidden>
+      <div class="loghead"><h3>Ready to send (<span id="pCount">0</span>)</h3><button id="rSendAll" class="primary small">Send all</button></div>
+      <ol id="pending" class="leads"></ol>
+    </div>
+    <div id="replyEditors" class="replyeds"></div>
+  </section>
   <section class="card">
     <h2>People who replied</h2>
     <ol id="leads" class="leads"></ol>
@@ -125,6 +141,22 @@
   <label class="check"><input id="sSentDone" type="checkbox"> Move chats to Done after sending</label>
   <label class="check"><input id="sImgReq" type="checkbox"> Don't send if the image fails to attach</label>
   <label class="check test"><input id="sTest" type="checkbox"> Test mode: fill the message box, but never press Send or Done</label>
+  <fieldset class="group" id="dupBox">
+    <legend>Already messaged</legend>
+    <label class="check"><input id="dCheck" type="checkbox"> Don't send if this message is already in the chat</label>
+    <p class="hint">Stop the run when it reaches people who already got this message (that's where your last run started):</p>
+    <div class="radios">
+      <label class="check"><input type="radio" name="stopBy" value="both"> Stop by name and message <span class="hint">(safest)</span></label>
+      <label class="check"><input type="radio" name="stopBy" value="message"> Stop by message <span class="hint">(also catches ones sent by hand)</span></label>
+      <label class="check"><input type="radio" name="stopBy" value="name"> Stop by name <span class="hint">(fastest: doesn't open the chat)</span></label>
+      <label class="check"><input type="radio" name="stopBy" value="off"> Don't stop, just skip them</label>
+    </div>
+    <div class="grid"><label>Stop after this many in a row<input id="dAfter" type="number" min="1" max="50" step="1"></label></div>
+    <p class="hint">Then “When the run is finished” runs (for example the shutdown countdown). Chats messaged earlier in the same run never count.</p>
+    <label class="check"><input id="bkOn" type="checkbox"> Also save the names to a folder on this PC <span class="hint">(needs the Windows helper)</span></label>
+    <label class="hint">Folder<input id="bkFolder" class="field" spellcheck="false"></label>
+    <div class="row"><button id="bkNow" class="small">Save now</button><span id="bkStatus" class="hint"></span></div>
+  </fieldset>
   <fieldset class="group" id="scrollBox">
     <legend>Scrolling</legend>
     <label class="hint" for="scHow">How far to scroll before sending (used by Start from: Bottom)</label>
@@ -152,9 +184,19 @@
       <label class="check"><input type="radio" name="whenFinished" value="shutdown"> Shut down the computer <span class="hint">(needs the Windows helper)</span></label>
     </div>
     <div class="grid"><label>Countdown before it happens (sec)<input id="fiSecs" type="number" min="10" step="5"></label></div>
-    <div class="row"><button id="fiCheck" class="small">Check shutdown helper</button><span id="fiStatus" class="hint"></span></div>
-    <p class="hint">Only after a normal finish (daily limit, or no more chats), never after Stop or a problem pause.
-      A countdown with Cancel shows on the Business Suite page first.</p>
+    <div class="row"><button id="fiCheck" class="small">Check Windows helper</button><span id="fiStatus" class="hint"></span></div>
+    <p class="hint">Only after a normal finish (daily limit, no more chats, or reached people who already got it),
+      never after Stop or a problem pause. A countdown with Cancel shows on the Business Suite page first.</p>
+    <div class="notify" id="notifyBox">
+      <b>Tell me when it's done</b>
+      <label class="check"><input id="nPC" type="checkbox"> Windows pop-up with sound</label>
+      <label class="check"><input id="nPhone" type="checkbox"> My phone (free ntfy app)</label>
+      <label class="hint" id="nTopicRow">ntfy topic (type the same name in the ntfy app)<input id="nTopic" class="field" spellcheck="false" placeholder="for example rojie-followup-7q2"></label>
+      <label class="check"><input id="nPause" type="checkbox"> Also when a run pauses because of a problem</label>
+      <div class="row"><button id="nTest" class="small">Send test notification</button><span id="nStatus" class="hint"></span></div>
+      <p class="hint">Phone setup, once: install <b>ntfy</b> from the Play Store or App Store → tap <b>+</b> → type a private
+        topic name only you know → type the same name above → press Send test notification.</p>
+    </div>
   </fieldset>
   <details class="adv">
     <summary>Advanced: words the app looks for</summary>

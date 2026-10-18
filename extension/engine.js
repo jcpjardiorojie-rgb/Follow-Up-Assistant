@@ -59,6 +59,11 @@
     // When the run finishes normally (not after Stop or a problem pause)
     whenFinished: "nothing", // "nothing", "closeTab", "closeChrome" or "shutdown"
     finishCountdownSec: 60,
+    // "Already messaged" (Settings): never send the same message twice, and stop when the run reaches
+    // people who already got it (chats you message jump to the top, so that's where the last run started).
+    dupCheck: true, // don't send if this message is already in the open chat
+    stopBy: "both", // "name", "message", "both" (name and message), or "off" (only skip, never stop)
+    stopAfter: 3, // stop after this many already-messaged chats in a row
     onlyIfLastFromMe: true, // skip chats where the customer wrote last
     moveSentToDone: false,
     testMode: false, // prepare everything but never press Send / Done
@@ -79,8 +84,31 @@
       "picture", "pic", "pics"],
     coldWords: ["not interested", "no thanks", "no thank you", "hindi na", "di na", "wag na", "huwag na", "ayaw ko",
       "ayoko", "stop", "unsubscribe", "busy", "no", "ayaw", "hindi"],
+    // Auto-replies to people who answered the follow-up (Buyers tab)
+    replyMode: "ask", // "ask" (show them first, you press Send) or "auto" (send right away)
+    autoCheckReplies: false, // also check for replies every few minutes while the inbox tab is open
+    autoCheckMinutes: 10,
+    autoCheckRows: 150, // how many chats from the top to read on an automatic check (replies jump to the top)
+    // Tell me when it's done (Settings → When the run is finished)
+    notifyPC: true, // Windows pop-up with its sound
+    notifyOnPause: true, // also when a run pauses because of problems or a Meta warning
+    notifyPhone: false, // phone notification through the free ntfy app
+    ntfyTopic: "",
+    ntfyServer: "https://ntfy.sh",
+    // Names that got each saved message: a backup copy in a folder on your PC (needs the Windows helper)
+    backupOn: true,
+    backupFolder: "D:\\FollowUp-History",
+    backupEvery: 25,
     labelName: "Hot lead",
     autoLabel: true, // add the label in Business Suite right after "Check replies"
+  };
+
+  // Example auto-replies (Buyers tab). Each can be turned on or off and have its own image.
+  const DEFAULT_REPLIES = {
+    hot: { on: true, text: "Hi {first_name}! 😊 Thank you for your message po! Here's our price list. Which one would you like po? Just reply with the item and we'll reserve it for you.", imageDataUrl: "", imageName: "" },
+    warm: { on: true, text: "Hi {first_name}! Sure po 😊 Here are the details. If you have any questions, just message us anytime, happy to help!", imageDataUrl: "", imageName: "" },
+    cold: { on: false, text: "Noted po, thank you {first_name}! 🙏 Just message us anytime if you change your mind.", imageDataUrl: "", imageName: "" },
+    replied: { on: false, text: "Thank you for your message po, {first_name}! We'll get back to you shortly 😊", imageDataUrl: "", imageName: "" },
   };
 
   // ---------- small helpers ----------
@@ -269,6 +297,20 @@
       if (rect(el).height >= 300) return el;
     }
     return null;
+  }
+  // Signatures of a message that survive a different first name, emoji and spacing (3A: "same beginning").
+  function messageSigs(template, name, cfg) {
+    const full = sig(render(template, name, cfg)).slice(0, 40);
+    const parts = String(template || "").split(/\{\s*(?:first[_ ]?name|(?:full[_ ]?)?name)\s*\}/i).map(sig);
+    const longest = parts.sort((a, b) => b.length - a.length)[0] || "";
+    // The whole message as this person would get it, and (for longer messages) its longest part without the name.
+    return [full.length >= 3 ? full : "", longest.length >= 12 ? longest.slice(0, 40) : ""].filter(Boolean);
+  }
+  async function chatHasMessage(list, composer, template, name, cfg) {
+    const read = () => messagesSig(findMessageList(list, composer), composer);
+    // Slow internet: the messages may still be loading, so wait (up to 2 s) until something shows.
+    const text = read() || (await waitFor(read, 2000, 200)) || "";
+    return !!text && messageSigs(template, name, cfg).some((x) => text.includes(x));
   }
   function messagesSig(msgList, composer) {
     if (!msgList) return "";
@@ -602,6 +644,16 @@
       why: "Turning off the PC needs the small Windows helper, and it isn't installed (or Chrome can't reach it).",
       fix: "Double-click windows\\Setup-FollowUp.bat once, then click ↻ on the extension at chrome://extensions. Settings → When finished → “Check shutdown helper” should then show ✓.",
     },
+    BACKUP_FAILED: {
+      what: "The names couldn't be saved to the folder on your PC. Sending is not affected; Chrome still has them.",
+      why: "The Windows helper is missing or is the older version (from before auto-save), or the folder can't be created (for example, there's no D drive).",
+      fix: "Double-click windows\\Setup-FollowUp.bat once more, then click ↻ on the extension. Check the folder under Settings → Already messaged, then press “Save now”.",
+    },
+    NOTIFY_FAILED: {
+      what: "The phone notification couldn't be sent.",
+      why: "The ntfy topic name is empty, or the internet connection dropped.",
+      fix: "Settings → When the run is finished: type your ntfy topic (the same name as in the ntfy app on your phone), then press “Send test notification”.",
+    },
     ERROR: {
       what: "Something unexpected went wrong on this chat, so nothing was sent.",
       why: "The page changed in a way the app didn't expect.",
@@ -620,8 +672,18 @@
       return out(status, reason, Object.assign({ code, help: HELP[code] }, e));
     };
     const excludedName = cfg.excludeNames.some((n) => low(n) === low(row.name));
+    const run = ctx.run || null;
+    const replying = !!cfg.replyText; // auto-reply to someone who answered (not the follow-up)
 
-    if (!excludedName && cfg.onlyIfLastFromMe && !row.fromMe) return out("SKIPPED", "Customer wrote last — reply to them yourself");
+    if (replying && row.fromMe) return out("SKIPPED", "You already answered them");
+    if (!replying && !excludedName && cfg.onlyIfLastFromMe && !row.fromMe) return out("SKIPPED", "Customer wrote last — reply to them yourself");
+
+    // Already messaged? "Stop by name" decides from the list, without opening the chat.
+    const thisRun = !!run && run.sentThisRun.has(row.name);
+    const nameHit = !replying && !excludedName && hooks.nameSent ? !!(await hooks.nameSent(row.name)) : false;
+    if (!replying && !excludedName && cfg.stopBy === "name" && nameHit) {
+      return thisRun ? out("SKIPPED", "Messaged earlier in this run") : out("ALREADY", "Already got this message (name)", { counted: true });
+    }
 
     // Open the chat and make sure it really is this person. Slow chats get a second try.
     const prevId = threadId();
@@ -647,25 +709,32 @@
     if (!headerHasName(row.name, list)) return problem("CHAT_CHANGED", "Chat changed while loading — nothing sent", { status: "REVIEW" });
 
     const id = threadId() || row.key;
-    if (await hooks.alreadyDone(id)) return out("SKIPPED", "Already handled in this campaign", { id });
-
     const warn = stopReason(cfg, list);
     if (warn) return out("STOP", `Meta shows: "${warn}"`, { id, code: "META_WARNING", help: HELP.META_WARNING });
 
-    const blocked = excludedName ? `Name is "${row.name}"` : bodyHas(cfg.blockedTexts) ? "Can't message this person" : null;
+    // "Facebook user" and "can't message" chats: always try Done while they're still in the inbox.
+    // They're never written down as handled, so a Done that didn't work is tried again next time.
+    const blocked = replying ? null : excludedName ? `Name is "${row.name}"` : bodyHas(cfg.blockedTexts) ? "Can't message this person" : null;
     if (blocked) {
       if (cfg.testMode) return out("EXCLUDED", blocked + " (test mode: Done not clicked)", { id });
       const m = await moveToDone(ctx, row);
-      await hooks.markDone(id);
       return m.ok ? out("EXCLUDED", blocked + " → moved to Done", { id }) : problem("DONE_FAILED", blocked + ", but " + m.why, { id, countsAsFailure: true });
     }
+    if (await hooks.alreadyDone(id)) return out("SKIPPED", replying ? "Already auto-replied" : "Already handled in this campaign", { id });
 
-    const composer = findComposer(list);
+    // The chat area can still be redrawing (e.g. the chat was already open), so give the box a moment.
+    const composer = findComposer(list) || (await waitFor(() => findComposer(list), 3000, 250));
     if (!composer) return problem("NO_MESSAGE_BOX", "Message box not found — nothing sent", { id });
 
     await scrollChatToLatestFor(list, composer);
 
-    const text = render(cfg.template, row.name, cfg);
+    // Never send the same message twice: is it already in this chat?
+    if (!replying && cfg.dupCheck !== false && (await chatHasMessage(list, composer, cfg.template, row.name, cfg))) {
+      const counted = !thisRun && (cfg.stopBy === "message" || (cfg.stopBy === "both" && nameHit));
+      return out(thisRun ? "SKIPPED" : "ALREADY", thisRun ? "Messaged earlier in this run" : "Already got this message" + (nameHit ? " (name and message)" : " (message)"), { id, counted });
+    }
+
+    const text = render(replying ? cfg.replyText : cfg.template, row.name, cfg);
     if (!(await putText(composer, text, hooks))) {
       await clearComposer(composer, hooks);
       return problem("TEXT_FAILED", "Couldn't put the message in the box — nothing sent", { id });
@@ -772,8 +841,17 @@
     }
     async run() {
       const { cfg, hooks } = this;
-      const visited = new Set();
-      let failures = 0, emptyLoads = 0;
+      // How many chats with each name + photo this run has handled. Counting (not just "seen") keeps
+      // two identical rows apart, like two "Facebook user" chats where Done didn't work on the first.
+      const visited = new Map();
+      const notVisited = (rows) => {
+        const seq = cfg.order === "top" ? rows : [...rows].reverse();
+        const seen = new Map();
+        const keep = new Set(seq.filter((r) => { const n = (seen.get(r.key) || 0) + 1; seen.set(r.key, n); return n > (visited.get(r.key) || 0); }));
+        return rows.filter((r) => keep.has(r));
+      };
+      this.sentThisRun = new Set();
+      let failures = 0, emptyLoads = 0, already = 0;
       this.setState("running");
       try {
         let screen = null;
@@ -790,7 +868,7 @@
 
           let rows = getRows(list, cfg);
           if (screen) rows = onlyFromScreenUp(rows, screen);
-          rows = rows.filter((r) => !visited.has(r.key));
+          rows = notVisited(rows);
           if (cfg.order !== "top") rows.reverse();
           if (!rows.length) {
             // Bottom-up: everything is loaded already, so look further UP (needed when the
@@ -806,17 +884,17 @@
           }
           emptyLoads = 0;
           const row = rows[0];
-          visited.add(row.key);
+          visited.set(row.key, (visited.get(row.key) || 0) + 1);
           await hooks.state({ state: "running", reason: "", current: row.name });
 
           let res;
-          try { res = await processRow({ cfg, hooks, list }, row); }
+          try { res = await processRow({ cfg, hooks, list, run: this }, row); }
           catch (e) { res = { time: new Date().toISOString(), name: row.name, status: "FAILED", reason: "Error: " + (e && e.message ? e.message : e), code: "ERROR", help: HELP.ERROR }; }
           if (res.status === "STOP") { await hooks.log(Object.assign(res, { status: "REVIEW" })); this.pause(res.reason + ". " + HELP.META_WARNING.fix); continue; }
           await hooks.log(res);
           // A chat moved to Done has left the list; another row with the same name
           // and default photo (e.g. a second "Facebook user") is a different person.
-          if (res.status === "EXCLUDED" && res.reason.endsWith("moved to Done")) visited.delete(row.key);
+          if (res.status === "EXCLUDED" && res.reason.endsWith("moved to Done")) visited.set(row.key, visited.get(row.key) - 1);
 
           const bad = res.status === "FAILED" || res.status === "REVIEW" || res.countsAsFailure;
           // Only a confirmed send proves sending works; skips and Done moves don't reset the count.
@@ -827,8 +905,15 @@
             this.pause(`Paused after ${cfg.maxConsecutiveFailures} problems in a row. Last one (${res.name}): ${h.what} How to fix: ${h.fix} See the Problems tab for details, then press Resume.`);
             continue;
           }
+          if (res.status === "SENT" || res.status === "UNKNOWN" || res.status === "TEST") { this.sentThisRun.add(row.name); already = 0; }
+          if (res.status === "ALREADY" && res.counted) already++;
+          const stopAt = Math.max(1, Math.round(+cfg.stopAfter || 3));
+          if (cfg.stopBy !== "off" && already >= stopAt) {
+            this.setState("finished", `Stopped: ${already} chats in a row already had this message, so this run reached the people from your last run.`);
+            return;
+          }
           if (res.status === "SENT" || res.status === "UNKNOWN" || res.status === "TEST") await this.wait(cfg.betweenChatsSec * 1000);
-          else if (res.status === "SKIPPED" && !res.id) await this.wait(50); // skipped from the list, chat never opened
+          else if ((res.status === "SKIPPED" || res.status === "ALREADY") && !res.id) await this.wait(50); // decided from the list, chat never opened
           else await this.wait(Math.min(cfg.stepDelayMs, 1500));
         }
       } catch (e) {
@@ -1115,6 +1200,27 @@
     }
   }
 
+  // Auto-reply: opens one person's chat and sends a prepared reply, only if they wrote last
+  // (if you already answered them yourself, nothing is sent). Same checks and send as the follow-up.
+  async function sendReply(cfg, contact, reply, hooks) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {}, {
+      replyText: reply.text, image: reply.image || null, moveSentToDone: false, onlyIfLastFromMe: false,
+    });
+    hooks = Object.assign({ alreadyDone: () => false, markDone: () => {}, onSent: () => {} }, hooks || {});
+    const f = await findChat(cfg, contact.key, contact.name);
+    if (!f) return { time: new Date().toISOString(), name: contact.name, key: contact.key, status: "FAILED",
+      reason: "Couldn't find this chat in the inbox list", code: "CHAT_NOT_FOUND", help: HELP.CHAT_NOT_FOUND };
+    return processRow({ cfg, hooks, list: f.list }, f.row);
+  }
+  // Where the inbox list is scrolled to, so a reply round in the middle of a run can put it back.
+  function listPosition(cfg) { const l = findList(Object.assign({}, DEFAULTS, cfg || {})); return l ? l.scrollTop : null; }
+  async function restoreListPosition(cfg, top) {
+    const l = findList(Object.assign({}, DEFAULTS, cfg || {}));
+    if (!l || top == null) return false;
+    for (let i = 0; i < 4 && Math.abs(l.scrollTop - top) > 5; i++) { l.scrollTop = top; await sleep(500); }
+    return true;
+  }
+
   // Adds a Business Suite label (e.g. "Hot lead") to one person's chat, then checks it shows.
   async function labelChat(cfg, contact, hooks) {
     cfg = Object.assign({}, DEFAULTS, cfg || {});
@@ -1231,6 +1337,7 @@
   const api = {
     VERSION,
     DEFAULTS,
+    DEFAULT_REPLIES,
     HELP,
     firstName,
     render,
@@ -1254,8 +1361,11 @@
       return waitFor(() => api.halted(), maxMs, 250);
     },
     classifyReply,
+    messageSigs,
     tools: { loadWholeInbox, pauseScroll, resumeScroll, stopScroll, scrollState, scrollChatToLatest, diagnose,
-      scanReplies, labelChat, labelLeads, openChat, scanState: () => scanJob.state },
+      scanReplies, labelChat, labelLeads, openChat, sendReply, listPosition, restoreListPosition,
+      stopScan: () => { scanJob.cancel = true; },
+      scanState: () => scanJob.state },
   };
   root.FollowUpEngine = api;
 })(typeof window !== "undefined" ? window : globalThis);

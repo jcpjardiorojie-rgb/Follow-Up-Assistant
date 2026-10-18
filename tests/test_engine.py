@@ -15,6 +15,7 @@ START = """async (cfg) => {
     markDone: (id) => { t.done.add(id); },
     sentToday: () => t.sent,
     onSent: () => { t.sent++; },
+    nameSent: (n) => (cfg.names || []).includes(n),
   };
   const r = FollowUpEngine.start(cfg, hooks);
   await Promise.race([r.done, new Promise((res) => setTimeout(res, cfg.maxWaitMs || 60000))]);
@@ -376,3 +377,86 @@ def test_bottom_with_a_scroll_count_sends_from_the_lowest_loaded_chat_up(page):
     assert any(s.get("reason", "").startswith("Scrolled 1 times") for s in res["states"])
     # 18 chats were loaded; it starts at the 18th and goes up (Deii Diesel wrote last, so skipped)
     assert [s["name"] for s in m["sent"]] == ["Carla JR Tauedea Vada", "Zner Naapmac"]
+
+
+def already(log):
+    return [e for e in log if e["status"] == "ALREADY"]
+
+
+def test_stops_when_it_reaches_people_who_already_got_this_message(page):
+    first = run(page, dailyCap=5)
+    names = [e["name"] for e in first["log"] if e["status"] == "SENT"]
+    assert len(names) == 5
+    # A new campaign (memory cleared): the 5 chats with this message are at the top now.
+    page.evaluate("window.__t = null")
+    res = run(page, stopBy="message", stopAfter=3)
+    assert res["state"] == "finished" and "3 chats in a row already had this message" in res["states"][-1]["reason"]
+    assert [e["name"] for e in already(res["log"])] == names[::-1][:3] and all(e["counted"] for e in already(res["log"]))
+    sent_ids = [s["id"] for s in mock(page)["sent"]]
+    assert len(sent_ids) == len(set(sent_ids)) == 5  # nobody got it twice
+
+
+def test_stop_by_name_decides_from_the_list_without_opening(page):
+    first = run(page, dailyCap=4)
+    names = [e["name"] for e in first["log"] if e["status"] == "SENT"]
+    page.evaluate("window.__t = null")
+    res = run(page, stopBy="name", stopAfter=3, names=names)
+    hits = already(res["log"])
+    assert res["state"] == "finished" and len(hits) == 3
+    assert all(e["id"] is None for e in hits)  # chat never opened
+
+
+def test_stop_by_name_and_message_needs_both(page):
+    first = run(page, dailyCap=3)
+    names = [e["name"] for e in first["log"] if e["status"] == "SENT"]
+    page.evaluate("window.__t = null")
+    # Only 2 of the 3 names are known: the newest chat has the message, but not the name, so it doesn't count.
+    res = run(page, stopBy="both", stopAfter=3, names=names[:2], dailyCap=8)
+    hits = already(res["log"])
+    assert [(e["name"], e["counted"]) for e in hits] == [(names[2], False), (names[1], True), (names[0], True)]
+    assert res["states"][-1]["reason"].startswith("Daily limit")  # never 3 counted in a row, so it kept going
+    sent_ids = [s["id"] for s in mock(page)["sent"]]
+    assert len(sent_ids) == len(set(sent_ids))
+
+
+def test_off_still_never_sends_the_same_message_twice(page):
+    run(page, dailyCap=4)
+    page.evaluate("window.__t = null")
+    res = run(page, stopBy="off", dailyCap=3)
+    assert len(already(res["log"])) == 4 and res["states"][-1]["reason"].startswith("Daily limit")
+    sent_ids = [s["id"] for s in mock(page)["sent"]]
+    assert len(sent_ids) == len(set(sent_ids)) == 7
+
+
+def test_facebook_user_is_moved_to_done_even_after_a_failed_try(page):
+    page.evaluate("__mock.flags.doneFailsOnce = true")
+    first = run(page, maxWaitMs=180000)
+    fails = [e for e in first["log"] if e.get("code") == "DONE_FAILED"]
+    assert {e["name"] for e in fails} >= {"Facebook user"}
+    # Next run (same campaign memory): they are tried again, not skipped as "already handled".
+    res = run(page, maxWaitMs=120000)
+    m = mock(page)
+    by_id = {i: n for i, n, _ in m["names"]}
+    assert sorted(by_id[i] for i in m["done"]).count("Facebook user") == 2
+    assert not [e for e in res["log"] if e["name"] == "Facebook user" and e["status"] == "SKIPPED"]
+
+
+def test_auto_reply_goes_only_to_people_who_wrote_last(page):
+    first = run(page, dailyCap=2)
+    sent = [e for e in first["log"] if e["status"] == "SENT"]
+    page.evaluate("(id) => __mock.reply(id, 'Magkano po?')", sent[0]["id"])
+    reply = {"text": "Hi {first_name}! Here's our price list po"}
+    r1 = page.evaluate("([c, r]) => FollowUpEngine.tools.sendReply({ stepDelayMs: 150, pageTimeoutMs: 2500 }, c, r)",
+                       [{"key": sent[0]["key"], "name": sent[0]["name"]}, reply])
+    assert r1["status"] == "SENT", r1
+    last = mock(page)["sent"][-1]
+    assert last["id"] == sent[0]["id"] and last["text"].endswith("Here's our price list po")
+    # Already answered (by the auto-reply, or by you): nothing more is sent.
+    r2 = page.evaluate("([c, r]) => FollowUpEngine.tools.sendReply({ stepDelayMs: 150, pageTimeoutMs: 2500 }, c, r)",
+                       [{"key": sent[0]["key"], "name": sent[0]["name"]}, reply])
+    assert r2["status"] == "SKIPPED" and "already answered" in r2["reason"]
+    # The second person didn't write back: no reply.
+    r3 = page.evaluate("([c, r]) => FollowUpEngine.tools.sendReply({ stepDelayMs: 150, pageTimeoutMs: 2500 }, c, r)",
+                       [{"key": sent[1]["key"], "name": sent[1]["name"]}, reply])
+    assert r3["status"] == "SKIPPED"
+    assert len(mock(page)["sent"]) == 3

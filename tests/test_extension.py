@@ -25,6 +25,7 @@ def ext(pw):
         panel.set_viewport_size({"width": 380, "height": 1100})
         panel.goto(f"chrome-extension://{ext_id}/sidepanel.html")
         panel.wait_for_selector("#where:has-text('Connected')")
+        panel._fu = {"profile": profile, "ext_id": ext_id}
         yield inbox, panel, sw
         ctx.close()
 
@@ -350,35 +351,58 @@ def test_scroll_settings_and_when_finished_countdown(ext):
 
 
 FAKE_HOST = r'''#!/usr/bin/env python3
-import json, struct, sys
+import json, os, struct, sys
 n = struct.unpack("<I", sys.stdin.buffer.read(4))[0]
 msg = json.loads(sys.stdin.buffer.read(n))
 with open(LOG, "a") as f:
-    f.write(json.dumps(msg) + "\n")
-out = json.dumps({"ok": True, "action": msg.get("action")}).encode()
-sys.stdout.buffer.write(struct.pack("<I", len(out)) + out)
+    f.write(json.dumps({k: v for k, v in msg.items() if k != "content"}) + "\n")
+a = msg.get("action")
+out = {"ok": True}
+if a == "ping":
+    out["version"] = "1.1"
+elif a in ("saveFile", "appendFile", "readFile"):
+    os.makedirs(msg["folder"], exist_ok=True)
+    path = os.path.join(msg["folder"], msg["name"])
+    if a == "saveFile":
+        open(path, "w", encoding="utf-8-sig", newline="").write(msg["content"])
+    elif a == "appendFile":
+        if not os.path.exists(path) and msg.get("header"):
+            open(path, "w", encoding="utf-8-sig", newline="").write(msg["header"])
+        open(path, "a", encoding="utf-8", newline="").write(msg["content"])
+    else:
+        text = open(path, encoding="utf-8-sig").read() if os.path.exists(path) else ""
+        off = int(msg.get("offset") or 0)
+        out.update(content=text[off:off + 300000], more=off + 300000 < len(text))
+data = json.dumps(out).encode()
+sys.stdout.buffer.write(struct.pack("<I", len(data)) + data)
 sys.stdout.buffer.flush()
 '''
 
 
-def test_shutdown_helper_is_called_when_installed(pw):
+def install_fake_host(profile, ext_id, tools):
     import json
     import sys
+    log = pathlib.Path(tools) / "calls.log"
+    host = pathlib.Path(tools) / "host.py"
+    host.write_text(f"#!{sys.executable}\nLOG = {str(log)!r}\n" + FAKE_HOST.split("\n", 1)[1])
+    host.chmod(0o755)
+    hosts = pathlib.Path(profile) / "NativeMessagingHosts"
+    hosts.mkdir(exist_ok=True)
+    (hosts / "com.rojie.followup_copilot.json").write_text(json.dumps({
+        "name": "com.rojie.followup_copilot", "description": "test", "path": str(host),
+        "type": "stdio", "allowed_origins": [f"chrome-extension://{ext_id}/"]}))
+    return log
+
+
+def test_shutdown_helper_is_called_when_installed(pw):
+    import json
     with tempfile.TemporaryDirectory() as profile, tempfile.TemporaryDirectory() as tools:
-        log = pathlib.Path(tools) / "calls.log"
-        host = pathlib.Path(tools) / "host.py"
-        host.write_text(f"#!{sys.executable}\nLOG = {str(log)!r}\n" + FAKE_HOST.split("\n", 1)[1])
-        host.chmod(0o755)
         ctx = pw.chromium.launch_persistent_context(
             profile, channel="chromium", headless=True,
             args=[f"--disable-extensions-except={EXT}", f"--load-extension={EXT}"])
         sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker")
         ext_id = sw.url.split("/")[2]
-        hosts = pathlib.Path(profile) / "NativeMessagingHosts"
-        hosts.mkdir(exist_ok=True)
-        (hosts / "com.rojie.followup_copilot.json").write_text(json.dumps({
-            "name": "com.rojie.followup_copilot", "description": "test", "path": str(host),
-            "type": "stdio", "allowed_origins": [f"chrome-extension://{ext_id}/"]}))
+        log = install_fake_host(profile, ext_id, tools)
         panel = ctx.new_page()
         panel.goto(f"chrome-extension://{ext_id}/sidepanel.html")
         panel.click("#settingsBox summary")
@@ -394,3 +418,146 @@ def test_shutdown_helper_is_called_when_installed(pw):
             ctx.close()
         except Exception:
             pass  # the extension closes Chrome itself after asking for the shutdown
+
+
+def _set(panel, sel, val):
+    panel.fill(sel, str(val))
+    panel.dispatch_event(sel, "change")
+
+
+def test_already_messaged_stop_notifies_and_saves_names_to_a_folder(ext):
+    inbox, panel, sw = ext
+    with tempfile.TemporaryDirectory() as tools:
+        install_fake_host(panel._fu["profile"], panel._fu["ext_id"], tools)
+        folder = str(pathlib.Path(tools) / "FollowUp-History")
+        sw.evaluate("() => { self.__notes = []; chrome.notifications.create = async (id, o) => { self.__notes.push(o); return id; }; }")
+        _quick_run_settings(panel, 3)
+        # Defaults the user chose
+        assert panel.is_checked("#dCheck") and panel.is_checked("input[name=stopBy][value=both]")
+        assert panel.input_value("#dAfter") == "3" and panel.input_value("#bkFolder") == "D:\\FollowUp-History"
+        assert panel.is_checked("#nPC") and not panel.is_checked("#nPhone")
+        panel.locator("#dupBox").screenshot(path=str(SHOTS / "option-a-already-messaged.png"))
+        panel.locator("#notifyBox").screenshot(path=str(SHOTS / "option-a-notify.png"))
+        panel.check("input[name=stopBy][value=message]")
+        _set(panel, "#bkFolder", folder)
+
+        panel.click("#start")
+        panel.wait_for_selector("#pill.finished", timeout=120_000)
+        sent = [s["name"] for s in inbox.evaluate("__mock.sent")]
+        assert len(sent) == 3
+        # Names were saved to the folder, and the run was written to runs.csv
+        panel.wait_for_selector("#bkStatus:has-text('3 names')", timeout=15_000)
+        csv = (pathlib.Path(folder) / "Message 1.csv").read_text(encoding="utf-8-sig")
+        assert csv.startswith("Name,Sent at") and all(n in csv for n in sent)
+        runs = pathlib.Path(folder) / "runs.csv"
+        panel.wait_for_timeout(1500)
+        assert "Daily limit" in runs.read_text(encoding="utf-8-sig")
+        # PC notification when finished
+        notes = sw.evaluate("self.__notes")
+        assert notes and notes[-1]["title"] == "FollowUp finished" and "3 sent today" in notes[-1]["message"]
+
+        # New campaign + higher limit: it reaches the 3 chats that already have the message and stops.
+        panel.click("#newCampaign")
+        panel.click("#confirmYes")
+        _set(panel, "#sCap", 20)
+        panel.click("#start")
+        panel.wait_for_selector("#pill.finished", timeout=120_000)
+        assert "3 chats in a row already had this message" in panel.inner_text("#reason")
+        assert len(inbox.evaluate("__mock.sent")) == 3  # nothing sent twice
+        assert panel.locator("#log .st.ALREADY").count() == 3
+        assert "already had this message" in sw.evaluate("self.__notes")[-1]["message"]
+        panel.locator("section.card.run").screenshot(path=str(SHOTS / "option-a-stopped-already.png"))
+
+        # Phone notification goes to the ntfy topic
+        calls = sw.evaluate("""async () => {
+          const calls = [];
+          self.fetch = async (u, o) => { calls.push([u, o.body, o.headers.Title]); return new Response("{}"); };
+          await notifyAll({ title: "FollowUp finished", message: "12 sent", phone: true, topic: "rojie-test", server: "https://ntfy.sh" });
+          return calls;
+        }""")
+        assert calls == [["https://ntfy.sh/rojie-test", "12 sent", "FollowUp finished"]]
+
+
+def test_names_come_back_from_the_folder_after_chrome_forgets_them(ext):
+    inbox, panel, sw = ext
+    with tempfile.TemporaryDirectory() as tools:
+        install_fake_host(panel._fu["profile"], panel._fu["ext_id"], tools)
+        folder = pathlib.Path(tools) / "FollowUp-History"
+        folder.mkdir()
+        names = [inbox.evaluate("(i) => __mock.convs[i].name", i) for i in (2, 4, 5)]  # Gabriella, Beroro, ROBIN: the first 3 that can be messaged
+        (folder / "Message 1.csv").write_text("Name,Sent at\r\n" + "".join(f'"{n}","2026-10-01"\r\n' for n in names), encoding="utf-8-sig")
+        _quick_run_settings(panel, 20)
+        panel.check("input[name=stopBy][value=name]")
+        _set(panel, "#bkFolder", str(folder))
+        panel.click("#start")
+        panel.wait_for_selector("#pill.finished", timeout=120_000)
+        assert "3 chats in a row" in panel.inner_text("#reason")
+        assert inbox.evaluate("__mock.sent") == []
+
+
+def test_auto_replies_ask_first_then_automatic(ext):
+    inbox, panel, sw = ext
+    _quick_run_settings(panel, 3)
+    panel.click("#start")
+    panel.wait_for_selector("#pill.finished", timeout=120_000)
+    sent = inbox.evaluate("__mock.sent")
+    inbox.evaluate("([a, b]) => { __mock.reply(a, 'Magkano po?'); __mock.reply(b, 'pa send details'); }", [sent[0]["id"], sent[1]["id"]])
+
+    panel.click("#tabBuyers")
+    assert panel.is_checked("input[name=replyMode][value=ask]")
+    assert panel.is_checked("#rOn_hot") and panel.is_checked("#rOn_warm") and not panel.is_checked("#rOn_cold")
+    panel.click("#bCheck")
+    panel.wait_for_selector("#pendingBox:not([hidden])", timeout=60_000)
+    assert panel.inner_text("#pCount") == "2"
+    assert "Here's our price list" in panel.inner_text("#pending")
+    panel.wait_for_selector("#bStatus:has-text('ready')", timeout=30_000)
+    panel.wait_for_selector("#rSendAll:enabled")
+    panel.locator("#replyCard").screenshot(path=str(SHOTS / "option-a-auto-replies.png"))
+    assert len(inbox.evaluate("__mock.sent")) == 3  # nothing sent before you press Send all
+
+    # Skip the warm one, send the hot one
+    panel.locator("#pending li.warm button:has-text('Skip')").click()
+    panel.wait_for_function("document.getElementById('pCount').textContent === '1'")
+    panel.click("#rSendAll")
+    inbox.wait_for_function("__mock.sent.length === 4", timeout=60_000)
+    last = inbox.evaluate("__mock.sent[3]")
+    assert last["id"] == sent[0]["id"] and "price list" in last["text"]
+    panel.wait_for_selector("#pendingBox[hidden]", state="attached", timeout=30_000)
+
+    # Automatic: a new reply gets its answer right after Check replies
+    panel.check("input[name=replyMode][value=auto]")
+    inbox.evaluate("(a) => __mock.reply(a, 'how much po')", sent[2]["id"])
+    panel.click("#bCheck")
+    inbox.wait_for_function("__mock.sent.length === 5", timeout=60_000)
+    assert inbox.evaluate("__mock.sent[4].id") == sent[2]["id"]
+    panel.click("#tabMain")
+    panel.wait_for_selector("#log .st.REPLY")
+    # Checking again sends nothing more (nobody gets a reply twice)
+    panel.click("#tabBuyers")
+    panel.click("#bCheck")
+    panel.wait_for_selector("#bStatus:has-text('Read')", timeout=60_000)
+    assert len(inbox.evaluate("__mock.sent")) == 5
+
+
+def test_replies_in_the_middle_of_a_run(ext):
+    inbox, panel, _ = ext
+    _quick_run_settings(panel, 2)
+    panel.click("#start")
+    panel.wait_for_selector("#pill.finished", timeout=120_000)
+    first = inbox.evaluate("__mock.sent[0].id")
+    inbox.evaluate("(a) => __mock.reply(a, 'magkano')", first)
+    _set(panel, "#sCap", 6)
+    _set(panel, "#sBetween", 6)
+    panel.click("#tabBuyers")
+    panel.check("input[name=replyMode][value=auto]")
+    panel.click("#tabMain")
+    panel.click("#start")
+    inbox.wait_for_function("__mock.sent.length >= 3", timeout=60_000)
+    panel.click("#tabBuyers")
+    panel.click("#bCheck")  # the run pauses after its chat, the reply goes out, then the run continues
+    inbox.wait_for_function(f"__mock.sent.some((s, i) => i >= 2 && s.id === '{first}')", timeout=90_000)
+    panel.click("#tabMain")
+    panel.wait_for_selector("#pill.running, #pill.finished", timeout=30_000)
+    panel.wait_for_selector("#pill.finished", timeout=120_000)
+    ids = [s["id"] for s in inbox.evaluate("__mock.sent")]
+    assert ids.count(first) == 2 and len(ids) == 7  # 6 follow-ups (2 + 4 more) + 1 reply

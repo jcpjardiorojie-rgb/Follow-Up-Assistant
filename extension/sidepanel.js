@@ -13,13 +13,16 @@ const DEF = {
   coldWords: FollowUpEngine.DEFAULTS.coldWords, labelName: "Hot lead", autoLabel: true,
   scrollHow: "count", scrollCount: 25, scrollChats: 500, scrollWaitSec: 1.5, unstickRetries: 2, loadAllMaxMinutes: 30,
   buttonUsesScrollSettings: true, whenFinished: "nothing", finishCountdownSec: 60,
+  dupCheck: true, stopBy: "both", stopAfter: 3, backupOn: true, backupFolder: FollowUpEngine.DEFAULTS.backupFolder,
+  notifyPC: true, notifyPhone: false, ntfyTopic: "", notifyOnPause: true, ntfyServer: "https://ntfy.sh",
+  replyMode: "ask", autoCheckReplies: false, autoCheckMinutes: 10,
 };
 const BAD = new Set(["FAILED", "REVIEW", "UNKNOWN"]);
-let settings = {}, template = {}, templates = [], contacts = {}, tabId = null, state = "idle", scrollState = "idle";
+let settings = {}, template = {}, templates = [], contacts = {}, history = {}, replies = {}, tabId = null, state = "idle", scrollState = "idle";
 
 // ---------- storage ----------
 async function loadAll() {
-  const d = await chrome.storage.local.get(["settings", "template", "templates", "activeTemplate", "stats", "log", "campaign", "problems", "contacts"]);
+  const d = await chrome.storage.local.get(["settings", "template", "templates", "activeTemplate", "stats", "log", "campaign", "problems", "contacts", "history", "replies", "backupStatus"]);
   showProblems(d.problems || []);
   settings = Object.assign({}, DEF, d.settings || {});
   // Saved messages. The single message from older versions becomes "Message 1".
@@ -27,6 +30,9 @@ async function loadAll() {
     : [Object.assign({ id: "t" + Date.now(), name: "Message 1", text: DEF.template, imageDataUrl: "", imageName: "" }, d.template || {})];
   template = templates.find((t) => t.id === d.activeTemplate) || templates[0];
   contacts = d.contacts || {};
+  history = d.history || {};
+  replies = Object.assign({}, FollowUpEngine.DEFAULT_REPLIES, d.replies || {});
+  showBackup(d.backupStatus);
   if (!d.templates) saveTemplate();
   fillForm();
   showStats(d.stats);
@@ -67,7 +73,20 @@ function fillForm() {
   $("scButton").checked = settings.buttonUsesScrollSettings;
   for (const r of document.querySelectorAll("input[name=whenFinished]")) r.checked = r.value === settings.whenFinished;
   $("fiSecs").value = settings.finishCountdownSec;
+  $("dCheck").checked = settings.dupCheck;
+  for (const r of document.querySelectorAll("input[name=stopBy]")) r.checked = r.value === settings.stopBy;
+  $("dAfter").value = settings.stopAfter;
+  $("bkOn").checked = settings.backupOn;
+  $("bkFolder").value = settings.backupFolder;
+  $("nPC").checked = settings.notifyPC;
+  $("nPhone").checked = settings.notifyPhone;
+  $("nTopic").value = settings.ntfyTopic;
+  $("nPause").checked = settings.notifyOnPause;
+  for (const r of document.querySelectorAll("input[name=replyMode]")) r.checked = r.value === settings.replyMode;
+  $("rAuto").checked = settings.autoCheckReplies;
+  $("rMins").value = settings.autoCheckMinutes;
   showScrollFields();
+  showReplyEditors();
   $("bLabelName").value = settings.labelName;
   $("cCap").textContent = "of " + settings.dailyCap;
   $("fbName").textContent = settings.fallbackName;
@@ -100,6 +119,20 @@ function readSettings() {
   const wf = document.querySelector("input[name=whenFinished]:checked");
   settings.whenFinished = wf ? wf.value : "nothing";
   settings.finishCountdownSec = Math.max(10, Math.round(+$("fiSecs").value || 60));
+  settings.dupCheck = $("dCheck").checked;
+  const sb = document.querySelector("input[name=stopBy]:checked");
+  settings.stopBy = sb ? sb.value : "both";
+  settings.stopAfter = Math.min(50, Math.max(1, Math.round(+$("dAfter").value || 3)));
+  settings.backupOn = $("bkOn").checked;
+  settings.backupFolder = $("bkFolder").value.trim() || DEF.backupFolder;
+  settings.notifyPC = $("nPC").checked;
+  settings.notifyPhone = $("nPhone").checked;
+  settings.ntfyTopic = $("nTopic").value.trim();
+  settings.notifyOnPause = $("nPause").checked;
+  const rm = document.querySelector("input[name=replyMode]:checked");
+  settings.replyMode = rm ? rm.value : "ask";
+  settings.autoCheckReplies = $("rAuto").checked;
+  settings.autoCheckMinutes = Math.max(2, Math.round(+$("rMins").value || 10));
   showScrollFields();
   settings.labelName = $("bLabelName").value.trim() || DEF.labelName;
   $("cCap").textContent = "of " + settings.dailyCap;
@@ -146,7 +179,8 @@ $("imgFile").addEventListener("change", () => {
 });
 $("imgRemove").addEventListener("click", () => { template.imageDataUrl = ""; template.imageName = ""; saveTemplate(); showImage(); });
 for (const id of ["sBetween", "sStep", "sCap", "sOrder", "sLastMine", "sSentDone", "sImgReq", "sTest", "aBlocked", "aNames", "aStop",
-  "aHot", "aWarm", "aCold", "bAuto", "bLabelName", "scHow", "scCount", "scChats", "scWait", "scRetry", "scMax", "scButton", "fiSecs"]) {
+  "aHot", "aWarm", "aCold", "bAuto", "bLabelName", "scHow", "scCount", "scChats", "scWait", "scRetry", "scMax", "scButton", "fiSecs",
+  "dCheck", "dAfter", "bkOn", "bkFolder", "nPC", "nPhone", "nTopic", "nPause", "rAuto", "rMins"]) {
   $(id).addEventListener("change", readSettings);
 }
 $("aReset").addEventListener("click", () => {
@@ -241,14 +275,17 @@ function showScrollFields() {
   $("scCount").closest("label").hidden = how !== "count";
   $("scChats").closest("label").hidden = how !== "chats";
 }
-for (const r of document.querySelectorAll("input[name=whenFinished]")) r.addEventListener("change", readSettings);
+for (const r of document.querySelectorAll("input[name=whenFinished],input[name=stopBy],input[name=replyMode]")) r.addEventListener("change", readSettings);
 $("fiCheck").addEventListener("click", async () => {
   const el = $("fiStatus");
   el.className = "hint"; el.textContent = "Checking…";
   try {
     const r = await chrome.runtime.sendNativeMessage("com.rojie.followup_copilot", { action: "ping" });
-    el.className = r && r.ok ? "good" : "bad";
-    el.textContent = r && r.ok ? "✓ Shutdown helper installed" : "✗ The helper answered with an error";
+    const fresh = r && r.ok && parseFloat(r.version || "1.0") >= 1.1;
+    el.className = fresh ? "good" : "bad";
+    el.textContent = !(r && r.ok) ? "✗ The helper answered with an error"
+      : fresh ? "✓ Windows helper installed (shutdown and saving names)"
+      : "✗ Old helper: shutdown works, saving names doesn't. Double-click windows\\Setup-FollowUp.bat again.";
   } catch (_) {
     el.className = "bad";
     el.textContent = "✗ Not installed. Double-click windows\\Setup-FollowUp.bat, then click ↻ on the extension.";
@@ -336,7 +373,15 @@ function showTemplates() {
   const st = statsFor(template.id);
   const pct = st.sent ? Math.round((st.replied / st.sent) * 100) : 0;
   const chip = (label, n) => { const s = document.createElement("span"); s.append(label + " "); const b = document.createElement("b"); b.textContent = n; s.append(b); return s; };
-  $("tplStats").replaceChildren(chip("Sent", st.sent), chip("Replied", `${st.replied} (${pct}%)`), chip("🔥 Hot", st.hot));
+  const names = Object.keys(history[template.id] || {}).length;
+  const clear = document.createElement("button");
+  clear.className = "small"; clear.id = "namesClear"; clear.textContent = "Clear names"; clear.hidden = !names;
+  clear.addEventListener("click", () => ask(`Forget the ${names} names that got “${template.name}”? They could get it again. (The copy in your PC folder is updated on the next save.)`, async () => {
+    delete history[template.id];
+    await chrome.storage.local.set({ history });
+    showTemplates();
+  }));
+  $("tplStats").replaceChildren(chip("Sent", st.sent), chip("Replied", `${st.replied} (${pct}%)`), chip("🔥 Hot", st.hot), chip("Names saved", names), clear);
   const f = $("bFilter").value;
   $("bFilter").replaceChildren(new Option("All messages", ""), ...templates.map((t) => new Option(t.name, t.id, false, t.id === f)));
 }
@@ -416,10 +461,11 @@ function showBuyers() {
     $("leads").replaceChildren(li);
   } else $("leads").replaceChildren(...people.slice(0, 300).map(leadItem));
   showTemplates();
+  showPending();
 }
 $("bFilter").addEventListener("change", showBuyers);
 function buyersBusy(busy, message) {
-  $("bCheck").disabled = busy; $("bLabel").disabled = busy; $("bStop").hidden = !busy;
+  $("bCheck").disabled = busy; $("bLabel").disabled = busy; $("bStop").hidden = !busy; $("rSendAll").disabled = busy;
   if (message !== undefined) $("bStatus").textContent = message;
 }
 $("bCheck").addEventListener("click", async () => {
@@ -433,7 +479,122 @@ $("bLabel").addEventListener("click", async () => {
   buyersBusy(r.ok, r.message);
 });
 $("bStop").addEventListener("click", () => send("stopBuyers"));
-chrome.storage.onChanged.addListener((ch) => { if (ch.contacts) { contacts = ch.contacts.newValue || {}; showBuyers(); } });
+chrome.storage.onChanged.addListener((ch) => {
+  if (ch.contacts) { contacts = ch.contacts.newValue || {}; showBuyers(); }
+  if (ch.history) { history = ch.history.newValue || {}; showTemplates(); }
+  if (ch.backupStatus) showBackup(ch.backupStatus.newValue);
+});
+
+
+// ---------- Already messaged: saving names to the PC ----------
+function showBackup(b) {
+  const el = $("bkStatus");
+  if (!b) { el.className = "hint"; el.textContent = ""; return; }
+  el.className = b.ok ? "good" : "bad";
+  el.textContent = b.ok ? `✓ Saved ${new Date(b.time).toLocaleString()} · ${b.names} names` : "✗ Not saved. See the Problems tab.";
+}
+$("bkNow").addEventListener("click", async () => {
+  readSettings();
+  $("bkStatus").className = "hint"; $("bkStatus").textContent = "Saving…";
+  const r = await send("backupNow");
+  if (!r.ok) { $("bkStatus").className = "bad"; $("bkStatus").textContent = r.message || "Not saved."; }
+});
+$("nTest").addEventListener("click", async () => {
+  readSettings();
+  $("nStatus").className = "hint"; $("nStatus").textContent = "Sending…";
+  const r = await chrome.runtime.sendMessage({ type: "fu-notify", title: "FollowUp test", message: "Notifications work. You'll get one like this when a run finishes.",
+    pc: settings.notifyPC, phone: settings.notifyPhone, topic: settings.ntfyTopic, server: settings.ntfyServer });
+  const parts = [];
+  if (settings.notifyPC) parts.push(r.pcOk ? "✓ PC" : "✗ PC");
+  if (settings.notifyPhone) parts.push(r.phoneOk ? "✓ phone" : "✗ phone" + (settings.ntfyTopic ? "" : " (type your ntfy topic)"));
+  $("nStatus").className = r.ok ? "good" : "bad";
+  $("nStatus").textContent = parts.length ? parts.join(" · ") : "Tick at least one.";
+});
+
+// ---------- Auto-replies (Buyers tab) ----------
+const REPLY_KINDS = [["hot", "🔥 Hot"], ["warm", "🙂 Warm"], ["cold", "❄️ Not interested"], ["replied", "💬 Other replies"]];
+const saveReplies = () => chrome.storage.local.set({ replies });
+function showReplyEditors() {
+  $("replyEditors").replaceChildren(...REPLY_KINDS.map(([k, label]) => {
+    const r = replies[k];
+    const box = document.createElement("div");
+    box.className = "replyed" + (r.on ? "" : " off");
+    box.dataset.kind = k;
+    const on = document.createElement("label");
+    on.className = "check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = !!r.on; cb.id = "rOn_" + k;
+    cb.addEventListener("change", () => { r.on = cb.checked; box.classList.toggle("off", !r.on); saveReplies(); });
+    on.append(cb, ` Reply to ${label}`);
+    const ta = document.createElement("textarea");
+    ta.rows = 3; ta.value = r.text || ""; ta.id = "rText_" + k;
+    ta.addEventListener("input", () => { r.text = ta.value; saveReplies(); });
+    const img = document.createElement("div");
+    img.className = "image";
+    const th = document.createElement("div");
+    th.className = "thumb" + (r.imageDataUrl ? "" : " empty");
+    th.style.backgroundImage = r.imageDataUrl ? `url("${r.imageDataUrl}")` : "";
+    th.textContent = r.imageDataUrl ? "" : "No image";
+    const pick = document.createElement("label");
+    pick.className = "filebtn"; pick.textContent = "Choose image";
+    const fi = document.createElement("input");
+    fi.type = "file"; fi.accept = "image/*"; fi.id = "rImg_" + k;
+    fi.addEventListener("change", () => {
+      const f = fi.files[0];
+      if (!f || f.size > 8 * 1024 * 1024) return;
+      const fr = new FileReader();
+      fr.onload = () => { r.imageDataUrl = fr.result; r.imageName = f.name; saveReplies(); showReplyEditors(); };
+      fr.readAsDataURL(f);
+    });
+    pick.append(fi);
+    img.append(th, pick);
+    if (r.imageDataUrl) {
+      const rm = document.createElement("button");
+      rm.className = "small"; rm.textContent = "Remove image";
+      rm.addEventListener("click", () => { r.imageDataUrl = ""; r.imageName = ""; saveReplies(); showReplyEditors(); });
+      img.append(rm);
+    }
+    box.append(on, ta, img);
+    return box;
+  }));
+}
+function showPending() {
+  const list = Object.values(contacts).filter((c) => c.replyPending && c.reply && c.autoReplyFor !== c.reply);
+  $("pendingBox").hidden = !list.length;
+  $("pCount").textContent = list.length;
+  $("pending").replaceChildren(...list.map((c) => {
+    const li = document.createElement("li");
+    li.className = c.kind;
+    const head = document.createElement("div");
+    head.className = "lh";
+    const who = document.createElement("span");
+    who.className = "who"; who.textContent = c.name;
+    const pill = document.createElement("span");
+    pill.className = "kind " + c.kind; pill.textContent = KIND[c.kind][0];
+    head.append(who, pill);
+    const said = document.createElement("div");
+    said.className = "said"; said.textContent = "“" + c.reply + "”";
+    const will = document.createElement("div");
+    will.className = "willsay";
+    const r = replies[c.kind] || {};
+    will.textContent = "Reply: " + FollowUpEngine.render(r.text || "", c.name, settings) + (r.imageDataUrl ? " + image" : "");
+    const foot = document.createElement("div");
+    foot.className = "lh";
+    const err = document.createElement("span");
+    err.className = "lab bad"; err.textContent = c.replyError ? "Not sent: " + c.replyError : "";
+    const skip = document.createElement("button");
+    skip.className = "small"; skip.textContent = "Skip";
+    skip.addEventListener("click", () => send("skipReply", { key: c.key }));
+    foot.append(err, skip);
+    li.append(head, said, will, foot);
+    return li;
+  }));
+}
+$("rSendAll").addEventListener("click", async () => {
+  readSettings();
+  const r = await send("sendReplies");
+  buyersBusy(r.ok, r.message);
+});
 
 // ---------- your inbox link ----------
 function showInboxMsg(text, kind) {

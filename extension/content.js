@@ -6,14 +6,14 @@
   const LOG_MAX = 2000;
 
   const today = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local time
-  const freshStats = () => ({ date: today(), sent: 0, excluded: 0, skipped: 0, failed: 0, unknown: 0, test: 0 });
+  const freshStats = () => ({ date: today(), sent: 0, excluded: 0, skipped: 0, failed: 0, unknown: 0, test: 0, replies: 0 });
 
   let data = null; // in-memory copy of storage while running
   let saveTimer = null;
   let lastState = { state: "idle", reason: "" };
 
   async function load() {
-    const d = await chrome.storage.local.get(["settings", "template", "templates", "activeTemplate", "campaign", "stats", "log", "problems", "contacts"]);
+    const d = await chrome.storage.local.get(["settings", "template", "templates", "activeTemplate", "campaign", "stats", "log", "problems", "contacts", "history", "replies"]);
     const stats = d.stats && d.stats.date === today() ? d.stats : freshStats();
     return {
       settings: Object.assign({}, E.DEFAULTS, d.settings || {}),
@@ -23,6 +23,8 @@
       log: d.log || [],
       problems: d.problems || [],
       contacts: d.contacts || {},
+      history: d.history || {}, // { messageId: { name: date sent } } kept per saved message, not erased by New campaign
+      replies: Object.assign({}, E.DEFAULT_REPLIES, d.replies || {}),
       tpl: (d.templates || []).find((t) => t.id === d.activeTemplate) || (d.templates || [])[0] ||
         Object.assign({ id: "t1", name: "Message 1" }, d.template || { text: E.DEFAULTS.template }),
     };
@@ -33,7 +35,7 @@
       if (!data) return;
       if (data.log.length > LOG_MAX) data.log = data.log.slice(-LOG_MAX);
       if (data.problems.length > 300) data.problems = data.problems.slice(-300);
-      chrome.storage.local.set({ campaign: data.campaign, stats: data.stats, log: data.log, problems: data.problems, contacts: data.contacts });
+      chrome.storage.local.set({ campaign: data.campaign, stats: data.stats, log: data.log, problems: data.problems, contacts: data.contacts, history: data.history });
     };
     if (now) write(); else saveTimer = setTimeout(write, 400);
   }
@@ -44,20 +46,24 @@
     if (data.stats.date !== today()) data.stats = freshStats();
   }
 
-  const COUNTER = { SENT: "sent", EXCLUDED: "excluded", SKIPPED: "skipped", FAILED: "failed", REVIEW: "failed", UNKNOWN: "unknown", TEST: "test" };
+  const COUNTER = { SENT: "sent", EXCLUDED: "excluded", SKIPPED: "skipped", ALREADY: "skipped", FAILED: "failed", REVIEW: "failed", UNKNOWN: "unknown", TEST: "test", REPLY: "replies" };
 
   function hooks(doneSet) {
     return {
       log(e) {
         rollDay();
         const k = COUNTER[e.status];
-        if (k && k !== "sent") data.stats[k]++;
+        if (k && k !== "sent") data.stats[k] = (data.stats[k] || 0) + 1;
         data.log.push({ time: e.time, name: e.name, status: e.status, reason: e.reason });
         if (e.status === "SENT" && e.key) {
           // Remember who got which message, so replies can be matched to it later (Buyers tab).
           const old = data.contacts[e.key] || {};
           data.contacts[e.key] = Object.assign(old, { key: e.key, name: e.name, id: e.id, templateId: data.tpl.id,
-            templateName: data.tpl.name, sentAt: e.time, reply: null, kind: null, replyAt: null });
+            templateName: data.tpl.name, sentAt: e.time, reply: null, kind: null, replyAt: null, replyPending: false });
+        }
+        if (e.status === "SENT") {
+          (data.history[data.tpl.id] = data.history[data.tpl.id] || {})[e.name] = e.time;
+          if (++sinceBackup >= Math.max(1, +data.settings.backupEvery || 25)) backup();
         }
         if (e.help) data.problems.push({ time: e.time, name: e.name, status: e.status, reason: e.reason, code: e.code, help: e.help });
         save();
@@ -67,9 +73,14 @@
         lastState = s;
         tell({ state: s, stats: data && data.stats });
         if (s.state !== "running") save(true);
+        if (s.state === "finished" || s.state === "stopped") { backup(); runLine(s); }
         // "When finished" only after a normal finish, never after Stop or a problem pause.
-        if (s.state === "finished") startFinish(data.settings.whenFinished, data.settings.finishCountdownSec);
+        if (s.state === "finished") finished(s);
+        if (s.state === "paused" && data.settings.notifyOnPause && /problems in a row|Meta shows|warning/i.test(s.reason || "")) {
+          notify("FollowUp paused", s.reason, data.settings);
+        }
       },
+      nameSent: (name) => !!(data.history[data.tpl.id] || {})[name],
       alreadyDone: (id) => doneSet.has(id),
       markDone(id) { if (!doneSet.has(id)) { doneSet.add(id); data.campaign.doneIds.push(id); save(); } },
       sentToday() { rollDay(); return data.stats.sent; },
@@ -79,7 +90,9 @@
 
   async function start() {
     if (!location.pathname.includes("/inbox")) return { ok: false, message: "Open the Inbox in Business Suite first." };
+    if (pageBusy) return { ok: false, message: "Answering replies right now. Press Start again in a moment." };
     data = await load();
+    await prepareHistory();
     const t = data.tpl;
     if (!t.text || !t.text.trim()) return { ok: false, message: "Write your follow-up message first." };
     const cfg = Object.assign({}, data.settings, {
@@ -151,81 +164,31 @@
   const withToast = (fn) => async () => { const r = await fn(); toast(r.message || (r.ok ? "Done" : "Didn't work")); return r; };
 
   // ---------- Buyers: who replied, how interested they are, and the hot-lead label ----------
-  let buyersBusy = false;
-  const busyNow = () => ["running", "paused"].includes(E.status()) || E.tools.scrollState() !== "idle";
-  const getContacts = async () => {
-    const d = await chrome.storage.local.get(["contacts", "problems"]);
-    return { contacts: d.contacts || {}, problems: d.problems || [] };
-  };
   const buyersTell = (state, message) => tell({ buyers: { state, message } });
 
+  // Adds the "Hot lead" label in Business Suite to hot leads that don't have it yet.
   async function labelHot(s) {
-    let { contacts, problems } = await getContacts();
-    const todo = Object.values(contacts).filter((c) => c.kind === "hot" && !c.labeled);
+    const todo = Object.values(data.contacts).filter((c) => c.kind === "hot" && !c.labeled);
     if (!todo.length) return "No new hot leads to label.";
     buyersTell("labeling", `Adding “${s.labelName}” to ${todo.length} hot lead(s)…`);
     const r = await E.tools.labelLeads(s, todo.map((c) => ({ key: c.key, name: c.name })),
       (p) => buyersTell("labeling", `Adding “${s.labelName}”… ${p.done} of ${p.total}`));
-    ({ contacts, problems } = await getContacts());
     let ok = 0, bad = 0;
     for (const x of r.results) {
-      const c = contacts[x.key];
+      const c = data.contacts[x.key];
       if (!c) continue;
       if (x.ok) { c.labeled = true; c.labelError = ""; ok++; continue; }
       bad++;
       c.labelError = x.why || (x.help && x.help.what) || "Couldn't add the label";
-      problems.push({ time: new Date().toISOString(), name: c.name, status: "FAILED", reason: "Label: " + c.labelError, code: x.code, help: x.help });
+      data.problems.push({ time: new Date().toISOString(), name: c.name, status: "FAILED", reason: "Label: " + c.labelError, code: x.code, help: x.help });
     }
-    await chrome.storage.local.set({ contacts, problems: problems.slice(-300) });
+    save(true);
     return `Labeled ${ok} hot lead(s)` + (bad ? `; ${bad} couldn't be labeled (see the Problems tab).` : ".");
   }
-
-  async function checkReplies() {
-    if (busyNow()) return { ok: false, message: "Stop the sending run (or the inbox scrolling) first." };
-    if (buyersBusy) return { ok: false, message: "Already working on it." };
-    const s = (await load()).settings;
-    const all = Object.values((await getContacts()).contacts);
-    if (!all.length) return { ok: false, message: "Nobody has been messaged from this browser yet, so there are no replies to check." };
-    buyersBusy = true;
-    (async () => {
-      try {
-        buyersTell("checking", "Checking replies… reading your inbox list");
-        const r = await E.tools.scanReplies(s, all.map((c) => ({ key: c.key, name: c.name })),
-          (p) => buyersTell("checking", `Checking replies… ${p.rows} chats read, ${p.replies} replies found`), s.replyScanMax || 600);
-        if (!r.ok) { buyersTell("done", r.message); return; }
-        const { contacts } = await getContacts();
-        const now = new Date().toISOString();
-        let fresh = 0;
-        for (const x of r.replies) {
-          const c = contacts[x.key];
-          if (!c || c.reply === x.reply) continue;
-          Object.assign(c, { reply: x.reply, kind: x.kind, replyAt: now });
-          fresh++;
-        }
-        await chrome.storage.local.set({ contacts });
-        let msg = `Read ${r.rows} chats: ${r.replies.length} replies (${fresh} new).`;
-        if (s.autoLabel) msg += " " + (await labelHot(s));
-        buyersTell("done", msg);
-        toast("Replies checked");
-      } catch (e) {
-        buyersTell("done", "Error: " + (e && e.message || e));
-      } finally {
-        buyersBusy = false;
-      }
-    })();
-    return { ok: true, message: "Checking replies…" };
-  }
-
   async function labelHotCmd() {
-    if (busyNow()) return { ok: false, message: "Stop the sending run (or the inbox scrolling) first." };
-    if (buyersBusy) return { ok: false, message: "Already working on it." };
-    const s = (await load()).settings;
-    buyersBusy = true;
-    (async () => {
-      try { buyersTell("done", await labelHot(s)); }
-      catch (e) { buyersTell("done", "Error: " + (e && e.message || e)); }
-      finally { buyersBusy = false; }
-    })();
+    if (pageBusy) return { ok: false, message: "Already working on it." };
+    withPage("Labeling hot leads…", async (s) => { buyersTell("done", await labelHot(s)); return { ok: true }; })
+      .then((r) => { if (r && r.ok === false && r.message) buyersTell("done", r.message); });
     return { ok: true, message: "Labeling hot leads…" };
   }
 
@@ -294,6 +257,240 @@
     }
   }
 
+
+  // ---------- names that got each message (H1), saved to a folder on your PC (D1) ----------
+  let sinceBackup = 0, backupWarned = false;
+  const csvCell = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+  const fileNameFor = (t) => (String(t.name || "Message").replace(/[\\/:*?"<>|\x00-\x1f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Message") + ".csv";
+  async function fileOp(msg) {
+    try { return await chrome.runtime.sendMessage(Object.assign({ type: "fu-file" }, msg)); }
+    catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  }
+  function parseNames(csv) {
+    const out = {};
+    for (const line of String(csv || "").replace(/^﻿/, "").split(/\r?\n/).slice(1)) {
+      const m = line.match(/^"((?:[^"]|"")*)"\s*,\s*"?([^"]*)"?/) || line.match(/^([^,]+),([^,]*)/);
+      if (m && m[1].trim()) out[m[1].replace(/""/g, '"')] = m[2] || "";
+    }
+    return out;
+  }
+  // Before a run: the Chrome copy, plus names from earlier sends of this message, plus (if Chrome's copy is
+  // empty, e.g. after a reinstall) the copy saved on your PC.
+  async function prepareHistory() {
+    const tid = data.tpl.id;
+    const h = (data.history[tid] = data.history[tid] || {});
+    for (const c of Object.values(data.contacts)) if (c.templateId === tid && c.name && !h[c.name]) h[c.name] = c.sentAt || "";
+    if (!Object.keys(h).length && data.settings.backupOn && data.settings.backupFolder) {
+      let text = "", offset = 0;
+      for (let i = 0; i < 200; i++) {
+        const r = await fileOp({ action: "readFile", folder: data.settings.backupFolder, name: fileNameFor(data.tpl), offset });
+        if (!r || !r.ok) break;
+        text += r.content || "";
+        offset += (r.content || "").length;
+        if (!r.more) break;
+      }
+      Object.assign(h, parseNames(text));
+    }
+    save(true);
+  }
+  async function setBackupStatus(st) { await chrome.storage.local.set({ backupStatus: st }); tell({ backup: st }); }
+  async function backup(force) {
+    if (!data || !data.settings.backupOn || !data.settings.backupFolder) return { ok: false, message: "Saving to your PC is turned off." };
+    sinceBackup = 0;
+    const h = data.history[data.tpl.id] || {};
+    const names = Object.keys(h);
+    const csv = "Name,Sent at\r\n" + names.map((n) => csvCell(n) + "," + csvCell(h[n])).join("\r\n") + "\r\n";
+    const r = await fileOp({ action: "saveFile", folder: data.settings.backupFolder, name: fileNameFor(data.tpl), content: csv });
+    const ok = !!(r && r.ok);
+    await setBackupStatus({ ok, time: new Date().toISOString(), names: names.length, file: data.settings.backupFolder + "\\" + fileNameFor(data.tpl), error: ok ? "" : (r && r.error) || "" });
+    if (!ok && (force || !backupWarned)) {
+      backupWarned = true;
+      data.problems.push({ time: new Date().toISOString(), name: "Save names to your PC", status: "FAILED", reason: (r && r.error) || "", code: "BACKUP_FAILED", help: E.HELP.BACKUP_FAILED });
+      save(true);
+    }
+    return { ok, message: ok ? `Saved ${names.length} names to ${data.settings.backupFolder}` : E.HELP.BACKUP_FAILED.what };
+  }
+  function runLine(s) {
+    if (!data || !data.settings.backupOn || !data.settings.backupFolder) return;
+    const st = data.stats;
+    const line = [new Date().toLocaleString(), data.tpl.name, st.sent, st.excluded, st.skipped, st.failed + st.unknown, s.reason || s.state].map(csvCell).join(",") + "\r\n";
+    fileOp({ action: "appendFile", folder: data.settings.backupFolder, name: "runs.csv", content: line,
+      header: "When,Message,Sent today,Moved to Done,Skipped,Problems,How it ended\r\n" });
+  }
+
+  // ---------- notifications (PC pop-up and phone) ----------
+  async function notify(title, message, s) {
+    s = s || (data && data.settings) || {};
+    if (!s.notifyPC && !s.notifyPhone) return { ok: true };
+    let r;
+    try {
+      r = await chrome.runtime.sendMessage({ type: "fu-notify", title, message, pc: !!s.notifyPC, phone: !!s.notifyPhone,
+        topic: s.ntfyTopic || "", server: s.ntfyServer || "https://ntfy.sh" });
+    } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+    if (r && r.phoneOk === false && data) {
+      data.problems.push({ time: new Date().toISOString(), name: "Phone notification", status: "FAILED", reason: r.error || "", code: "NOTIFY_FAILED", help: E.HELP.NOTIFY_FAILED });
+      save(true);
+    }
+    return r || { ok: false };
+  }
+  async function finished(s) {
+    const st = data.stats, set = data.settings;
+    // One last reply round before the PC is closed or shut down.
+    if (set.autoCheckReplies && set.whenFinished !== "nothing") {
+      try { await replyRound({ auto: true, final: true }); } catch (_) {}
+    }
+    let msg = `${st.sent} sent today · ${st.excluded} moved to Done. ${s.reason || ""}`;
+    if (set.whenFinished !== "nothing") msg += ` Then: ${FINISH_TEXT[set.whenFinished]} in ${set.finishCountdownSec} s, unless you press Cancel.`;
+    notify("FollowUp finished", msg, set);
+    startFinish(set.whenFinished, set.finishCountdownSec);
+  }
+
+  // ---------- auto-replies to people who answered the follow-up (Buyers tab) ----------
+  // Reply rounds can happen in the middle of a run: the run pauses after its current chat, the inbox
+  // list is put back where it was afterwards, and the run continues by itself.
+  let pageBusy = false, lastAutoCheck = Date.now();
+  const me = Math.random().toString(36).slice(2);
+  const KIND_NAME = { hot: "🔥 Hot", warm: "🙂 Warm", cold: "❄️ Not interested", replied: "💬 Other" };
+  async function lock(on) {
+    const { replyLock } = await chrome.storage.local.get("replyLock");
+    if (on) {
+      if (replyLock && replyLock.owner !== me && replyLock.until > Date.now()) return false; // another inbox tab is on it
+      await chrome.storage.local.set({ replyLock: { owner: me, until: Date.now() + 15 * 60000 } });
+      return true;
+    }
+    if (replyLock && replyLock.owner === me) await chrome.storage.local.remove("replyLock");
+    return true;
+  }
+  // Runs fn with the page to itself (the run paused after its chat), then puts things back.
+  async function withPage(note, fn, keepData) {
+    if (pageBusy) return { ok: false, message: "Already working on replies." };
+    if (scrolling()) return { ok: false, message: "The inbox is scrolling. Try again when it's done." };
+    if (!(await lock(true))) return { ok: false, message: "Another Business Suite tab is answering replies." };
+    pageBusy = true;
+    let pausedByMe = false, pos = null;
+    try {
+      if (E.status() === "running") {
+        tell({ state: { state: "paused", reason: note + " (finishing the current chat first)" } });
+        if (!(await E.pauseAndWait())) return { ok: false, message: "The run didn't pause in time. Try again." };
+        pausedByMe = true;
+      } else if (E.status() === "paused") {
+        await E.pauseAndWait();
+      }
+      if (!["running", "paused"].includes(E.status()) && !(keepData && data)) data = await load();
+      if (pausedByMe) tell({ state: { state: "paused", reason: note + " The run continues by itself after." } });
+      pos = E.tools.listPosition(data.settings);
+      return await fn(data.settings);
+    } finally {
+      if (pos != null) await E.tools.restoreListPosition(data.settings, pos);
+      save(true);
+      pageBusy = false;
+      await lock(false);
+      if (pausedByMe && E.status() === "paused") E.resume();
+    }
+  }
+  function pendingReplies() {
+    return Object.values(data.contacts).filter((c) => c.replyPending && c.reply && c.autoReplyFor !== c.reply);
+  }
+  async function sendOne(c, s) {
+    const rep = data.replies[c.kind];
+    if (!rep || !rep.text || !rep.text.trim()) return null;
+    const image = rep.imageDataUrl ? { dataUrl: rep.imageDataUrl, name: rep.imageName || "image.jpg" } : null;
+    const hooksR = { alreadyDone: () => false, markDone: () => {}, onSent: () => {} };
+    let res;
+    try { res = await E.tools.sendReply(Object.assign({}, s, { testMode: s.testMode }), { key: c.key, name: c.name }, { text: rep.text, image }, hooksR); }
+    catch (e) { res = { time: new Date().toISOString(), name: c.name, status: "FAILED", reason: "Error: " + (e && e.message || e), code: "ERROR", help: E.HELP.ERROR }; }
+    const now = new Date().toISOString();
+    const entry = Object.assign({}, res, { name: c.name });
+    if (res.status === "SENT") {
+      Object.assign(c, { autoReplyFor: c.reply, autoReplyAt: now, autoReplyKind: c.kind, replyPending: false, replyError: "" });
+      entry.status = "REPLY";
+      entry.reason = `Auto-reply (${KIND_NAME[c.kind]}) · ${res.reason}`;
+    } else if (res.status === "SKIPPED" || res.status === "TEST") {
+      if (res.status === "SKIPPED") Object.assign(c, { autoReplyFor: c.reply, replyPending: false });
+      entry.reason = "Auto-reply: " + res.reason;
+    } else {
+      Object.assign(c, { replyError: (res.help && res.help.what) || res.reason });
+      entry.reason = "Auto-reply not sent: " + res.reason;
+    }
+    hooks(new Set()).log(entry);
+    return res;
+  }
+  async function sendReplies(list, s) {
+    let sent = 0, other = 0;
+    for (const c of list) {
+      if (stopReplies) break;
+      buyersTell("checking", `Sending replies… ${sent + other + 1} of ${list.length} (${c.name})`);
+      const r = await sendOne(c, s);
+      if (r && r.status === "SENT") sent++; else other++;
+      await new Promise((ok) => setTimeout(ok, Math.min(5, Math.max(1, +s.betweenChatsSec || 3)) * 1000));
+    }
+    return { sent, other };
+  }
+  let stopReplies = false;
+  async function replyRound({ auto, final }) {
+    stopReplies = false;
+    return withPage("Checking replies…", async (s) => {
+      const all = Object.values(data.contacts);
+      if (!all.length) { buyersTell("done", "Nobody has been messaged from this browser yet, so there are no replies to check."); return { ok: false, message: "No one to check yet." }; }
+      buyersTell("checking", "Checking replies… reading your inbox list");
+      const r = await E.tools.scanReplies(s, all.map((c) => ({ key: c.key, name: c.name })),
+        (p) => buyersTell("checking", `Checking replies… ${p.rows} chats read, ${p.replies} replies found`),
+        auto ? Math.max(20, +s.autoCheckRows || 150) : (s.replyScanMax || 600));
+      if (!r.ok) { buyersTell("done", r.message); return r; }
+      const now = new Date().toISOString();
+      let fresh = 0;
+      for (const x of r.replies) {
+        const c = data.contacts[x.key];
+        if (!c || c.reply === x.reply) continue;
+        Object.assign(c, { reply: x.reply, kind: x.kind, replyAt: now, replyError: "" });
+        fresh++;
+      }
+      // Who should get an auto-reply: their category is on, and they haven't had one for this message of theirs.
+      const want = Object.values(data.contacts).filter((c) => c.reply && c.kind && data.replies[c.kind] && data.replies[c.kind].on &&
+        c.autoReplyFor !== c.reply && c.replySkipFor !== c.reply);
+      let msg = `Read ${r.rows} chats: ${r.replies.length} replies (${fresh} new).`;
+      if (want.length && s.replyMode === "auto") {
+        const t = await sendReplies(want, s);
+        msg += ` Auto-replied to ${t.sent}` + (t.other ? `; ${t.other} not sent (see Activity).` : ".");
+      } else if (want.length) {
+        const newOnes = want.filter((c) => !c.replyPending);
+        want.forEach((c) => { c.replyPending = true; });
+        msg += ` ${want.length} auto-replies ready: check them in the Buyers tab, then press Send all.`;
+        if (auto && newOnes.length && !final) notify("FollowUp: replies ready", `${newOnes.length} people answered your follow-up. Open the Buyers tab to send the replies.`, Object.assign({}, s, { notifyPhone: false }));
+      }
+      save(true);
+      if (s.autoLabel) msg += " " + (await labelHot(s));
+      buyersTell("done", msg);
+      if (!auto) toast("Replies checked");
+      return { ok: true, message: msg };
+    }, final);
+  }
+  async function sendPending(keys) {
+    stopReplies = false;
+    return withPage("Sending replies…", async (s) => {
+      let list = pendingReplies();
+      if (keys && keys.length) list = list.filter((c) => keys.includes(c.key));
+      if (!list.length) { buyersTell("done", "No replies waiting."); return { ok: true, message: "No replies waiting." }; }
+      const t = await sendReplies(list, s);
+      const msg = `Sent ${t.sent} replies` + (t.other ? `; ${t.other} not sent (see Activity).` : ".");
+      buyersTell("done", msg);
+      return { ok: true, message: msg };
+    });
+  }
+  // T2: every few minutes while this inbox tab is open.
+  if (window.top === window) setInterval(async () => {
+    try {
+      if (!location.pathname.includes("/inbox") || finishAction) return;
+      const { settings } = await chrome.storage.local.get("settings");
+      const s = Object.assign({}, E.DEFAULTS, settings || {});
+      if (!s.autoCheckReplies) { lastAutoCheck = Date.now(); return; }
+      if (Date.now() - lastAutoCheck < Math.max(1, +s.autoCheckMinutes || 10) * 60000) return;
+      if (pageBusy || scrolling()) return;
+      lastAutoCheck = Date.now();
+      replyRound({ auto: true });
+    } catch (_) {}
+  }, 20000);
+
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (!msg || msg.to !== "content") return;
     (async () => {
@@ -308,13 +505,33 @@
         case "resumeScroll": return { ok: E.tools.resumeScroll() };
         case "stopScroll": return { ok: E.tools.stopScroll() };
         case "scrollState": return { ok: true, state: E.tools.scrollState() };
-        case "checkReplies": return checkReplies();
+        case "checkReplies": {
+          if (pageBusy) return { ok: false, message: "Already working on it." };
+          replyRound({ auto: false }).then((r) => { if (r && r.ok === false && r.message) buyersTell("done", r.message); });
+          return { ok: true, message: "Checking replies…" };
+        }
+        case "sendReplies": {
+          if (pageBusy) return { ok: false, message: "Already working on it." };
+          sendPending(msg.keys).then((r) => { if (r && r.ok === false && r.message) buyersTell("done", r.message); });
+          return { ok: true, message: "Sending replies…" };
+        }
+        case "skipReply": {
+          const d = ["running", "paused"].includes(E.status()) ? data : (data = await load());
+          const c = d.contacts[msg.key];
+          if (c) { Object.assign(c, { replyPending: false, replySkipFor: c.reply }); save(true); }
+          return { ok: true };
+        }
+        case "backupNow": {
+          if (!["running", "paused"].includes(E.status())) { data = await load(); await prepareHistory(); }
+          return backup(true);
+        }
+        case "testNotify": return notify("FollowUp test", "Notifications work. You'll get one like this when a run finishes.", Object.assign({}, E.DEFAULTS, msg.settings || {}));
         case "labelHot": return labelHotCmd();
-        case "stopBuyers": E.stop(); return { ok: true };
+        case "stopBuyers": stopReplies = true; E.tools.stopScan(); return { ok: true };
         case "cancelFinish": cancelFinish(); return { ok: true };
         case "finishNow": doFinish(); return { ok: true };
         case "finishState": return { ok: true, action: finishAction, left: finishAction ? Math.max(0, Math.ceil((finishEnd - Date.now()) / 1000)) : 0 };
-        case "buyersState": return { ok: true, busy: buyersBusy };
+        case "buyersState": return { ok: true, busy: pageBusy };
         case "openChat": {
           const r = await E.tools.openChat((await load()).settings, msg.key, msg.name);
           return { ok: r.ok, message: r.ok ? "Opened" : r.help.what + " " + r.help.fix };

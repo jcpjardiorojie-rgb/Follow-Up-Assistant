@@ -58,7 +58,7 @@ Write-Host ("Extension found: " + ($ids -join ', '))
 $manifestPath = Join-Path $dest "$hostName.json"
 $hostManifest = [ordered]@{
     name            = $hostName
-    description     = 'FollowUp Copilot shutdown helper'
+    description     = 'FollowUp Copilot helper (shutdown and saving names)'
     path            = (Join-Path $dest 'followup-host.bat')
     type            = 'stdio'
     allowed_origins = @($ids | ForEach-Object { "chrome-extension://$_/" })
@@ -67,7 +67,7 @@ $hostManifest | ConvertTo-Json | Set-Content -Path $manifestPath -Encoding ASCII
 $key = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$hostName"
 New-Item -Path $key -Force | Out-Null
 Set-Item -Path $key -Value $manifestPath
-Write-Host 'Shutdown helper installed.' -ForegroundColor Green
+Write-Host 'Helper installed (shutdown and saving names to your PC).' -ForegroundColor Green
 
 # --- Desktop icon: FollowUp Chrome ---
 $chrome = @(

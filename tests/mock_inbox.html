@@ -265,6 +265,8 @@
     }, 250);
   }
   function moveToDone(c) {
+    // flags.doneFailsOnce: the first click on Done does nothing (seen on the real page now and then)
+    if (mock.flags.doneFailsOnce && !c.doneFailed) { c.doneFailed = true; return; }
     setTimeout(() => {
       c.done = true; mock.done.push(c.id);
       if (mock.selected === c) mock.selected = null;
