@@ -183,3 +183,4 @@ h1 .by { font-size: 12px; font-weight: 500; color: var(--muted); white-space: no
 /* long summaries wrap under the title instead of being cut off */
 .sec > summary { flex-wrap: wrap; row-gap: 2px; }
 .sec > summary .sum { white-space: normal; text-align: left; margin-left: auto; }
+[hidden] { display: none !important; }
