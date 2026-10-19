@@ -475,3 +475,48 @@ def test_switched_off_works_like_before_1_7(page):
     page.evaluate("window.__t = null")
     res = run(page, dupCheck=False, stopBy="name", names=names, dailyCap=3)
     assert not already(res["log"]) and res["states"][-1]["reason"].startswith("Daily limit")
+
+
+def test_narrow_window_scrolls_the_inbox_not_the_chat(browser):
+    """Business Suite in a half-screen window: the chat's messages must never be taken for the inbox list."""
+    from conftest import ENGINE_JS, INBOX_URL, serve_mock
+    ctx = browser.new_context(viewport={"width": 950, "height": 900})
+    pg = ctx.new_page()
+    serve_mock(pg)
+    pg.goto(INBOX_URL)
+    pg.wait_for_function("window.__mock && document.querySelectorAll('.row').length > 5")
+    pg.evaluate("__mock.flags.fullRows = true")
+    pg.evaluate(ENGINE_JS)
+    pg.click(".row:nth-child(4)")
+    pg.wait_for_selector("#msgs .mrow")
+    d = pg.evaluate("FollowUpEngine.tools.diagnose({})")
+    assert d["rows"] == 12 and d["firstRows"][0]["name"] == "Lista Maison"
+    msgs_before = pg.evaluate("document.getElementById('msgs').scrollTop")
+    r = pg.evaluate("FollowUpEngine.tools.loadWholeInbox({ scrollWaitSec: 0.2, unstickRetries: 0, buttonUsesScrollSettings: false })")
+    assert r["reachedEnd"] and r["chats"] >= 21
+    assert pg.evaluate("document.getElementById('list').scrollTop") > 0
+    assert pg.evaluate("document.getElementById('msgs').scrollTop") == msgs_before
+    ctx.close()
+
+
+def test_ad_chat_uses_the_name_from_the_chat_header(page):
+    page.evaluate("__mock.flags.adFor = 'Gabriella B Iramo'")
+    res = run(page, dailyCap=1)
+    sent = mock(page)["sent"]
+    assert len(sent) == 1 and sent[0]["name"] == "Gabriella B Iramo"
+    assert sent[0]["text"].startswith("Hi Gabriella!")
+    e = [x for x in res["log"] if x["status"] == "SENT"][0]
+    assert e["name"] == "Gabriella B Iramo" and e["listText"].startswith("I am very interested")
+
+
+def test_end_reasons_and_waiting_while_hidden(page):
+    res = run(page, dailyCap=2)
+    assert res["states"][-1]["code"] == "daily"
+    page.evaluate("window.__t = null")
+    # A hidden window waits instead of guessing; it continues when visible again.
+    page.evaluate("""() => { window.__hidden = true;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.__hidden }); }""")
+    page.evaluate("setTimeout(() => { window.__hidden = false; }, 2500)")
+    res = run(page, dailyCap=3)
+    assert any(s.get("code") == "hidden" for s in res["states"]) and any(s.get("code") == "visible" for s in res["states"])
+    assert res["states"][-1]["code"] == "daily" and len(mock(page)["sent"]) == 5  # 2 + 3

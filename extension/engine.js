@@ -61,6 +61,8 @@
     finishCountdownSec: 60,
     // "Already messaged" (Settings): never send the same message twice, and stop when the run reaches
     // people who already got it (chats you message jump to the top, so that's where the last run started).
+    waitWhenHidden: true, // F4: while the Business Suite window is hidden (minimized, screen locked), wait instead of guessing
+    stallRetries: 3, // F4: when chats stop loading, wait a minute and try again this many times before deciding it's the end
     dupCheck: false, // off = works exactly like 1.6.0; on = don't send if FollowUp already sent this message to them
     stopBy: "both", // "name", "message", "both" (name and message), or "off" (only skip, never stop)
     stopAfter: 3, // stop after this many already-messaged chats in a row
@@ -212,13 +214,22 @@
       if (el) return el;
     }
     const W = window.innerWidth;
-    let best = null, bestCount = 0;
+    // The message box (where you type) sits under the chat's messages, never under the inbox list.
+    const boxes = [...document.querySelectorAll("[contenteditable=true],textarea,[role=textbox]")].filter(isVisible).map(rect);
+    const chatColumn = (r) => boxes.some((b) => {
+      const overlap = Math.min(r.right, b.right) - Math.max(r.left, b.left);
+      return overlap > Math.min(r.width, b.width) * 0.5 && b.top >= r.top + r.height * 0.5;
+    });
+    let best = null, bestScore = 0, bestLeft = Infinity;
     for (const el of document.querySelectorAll("div,ul,ol,section")) {
       if (!isScrollable(el)) continue;
       const r = rect(el);
       if (r.height < 200 || r.width < 150 || r.left > W * 0.45 || r.width > W * 0.55) continue;
-      const n = rowGroup(el).length;
-      if (n > bestCount) { best = el; bestCount = n; }
+      if (chatColumn(r)) continue; // that's the open chat, not the inbox
+      const rows = rowGroup(el);
+      // Inbox rows have a photo plus a name and a preview line; chat messages usually don't.
+      const score = rows.length + 2 * rows.filter((x) => x.querySelector("img,svg,[role=img]") && textLines(x).length >= 2).length;
+      if (score > bestScore || (score === bestScore && r.left < bestLeft)) { best = el; bestScore = score; bestLeft = r.left; }
     }
     return best;
   }
@@ -264,6 +275,22 @@
     }
     return false;
   }
+
+  // The name shown at the top of the open chat (right of the list). Used for ad chats and for the Log.
+  function headerName(list) {
+    const lr = rect(list);
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const t = norm(n.nodeValue);
+      const p = n.parentElement;
+      if (!t || t.length < 2 || t.length > 60 || !p || list.contains(p) || !isVisible(p) || p.closest("button,[role=button],textarea,[contenteditable=true]")) continue;
+      const r = rect(p);
+      if (r.left >= lr.right - 5 && r.top < Math.min(lr.top + 120, window.innerHeight * 0.3)) return t;
+    }
+    return "";
+  }
+  // Chats started from an ad can show the customer's question where the name normally is.
+  const looksLikeMessage = (name) => /[?!.]$/.test(name) || name.split(" ").length >= 7 || name.length > 45;
 
   function findComposer(list) {
     const lr = rect(list);
@@ -663,7 +690,8 @@
 
   async function processRow(ctx, row) {
     const { cfg, hooks, list } = ctx;
-    const out = (status, reason, extra) => Object.assign({ time: new Date().toISOString(), name: row.name, key: row.key, id: null, status, reason: reason || "" }, extra || {});
+    const out = (status, reason, extra) => Object.assign({ time: new Date().toISOString(), name: row.name, key: row.key, id: null, status, reason: reason || "" },
+      row.listText ? { listText: row.listText } : {}, extra || {});
     // A problem entry: status (FAILED unless given), plus the code and its plain-language help.
     const problem = (code, reason, extra) => {
       const e = Object.assign({}, extra);
@@ -706,11 +734,16 @@
         catch (e) { if (e.message !== "STALE") throw e; await sleep(400); }
       }
       if (!clicked) return problem("CLICK_FAILED", "Couldn't click this chat in the list — nothing sent", { status: "REVIEW" });
-      opened = await waitFor(() => headerHasName(row.name, list) && (alreadyOpen || threadId() === null || threadId() !== prevId), cfg.pageTimeoutMs);
+      // Ad chat: the list shows the customer's question instead of the name. If a different chat really
+      // opened (its id changed), the name shown at the top of the chat is used instead.
+      const adLike = looksLikeMessage(row.name);
+      const adOpened = () => adLike && !!threadId() && threadId() !== prevId && !!headerName(list) && !looksLikeMessage(headerName(list));
+      opened = await waitFor(() => (headerHasName(row.name, list) && (alreadyOpen || threadId() === null || threadId() !== prevId)) || adOpened(), cfg.pageTimeoutMs);
+      if (opened && !headerHasName(row.name, list) && adOpened()) row = Object.assign({}, row, { name: headerName(list), listText: row.name });
     }
-    if (!opened) return problem("OPEN_TIMEOUT", "Couldn't confirm the open chat is this person — nothing sent", { status: "REVIEW" });
+    if (!opened) return problem("OPEN_TIMEOUT", "Couldn't confirm the open chat is this person — nothing sent", { status: "REVIEW", seen: headerName(list) });
     await sleep(cfg.stepDelayMs);
-    if (!headerHasName(row.name, list)) return problem("CHAT_CHANGED", "Chat changed while loading — nothing sent", { status: "REVIEW" });
+    if (!headerHasName(row.name, list)) return problem("CHAT_CHANGED", "Chat changed while loading — nothing sent", { status: "REVIEW", seen: headerName(list) });
 
     const id = threadId() || row.key;
     const warn = stopReason(cfg, list);
@@ -830,9 +863,10 @@
       this.stopped = false;
       this.done = this.run();
     }
-    setState(state, reason) {
+    // code says why a run finished: "daily", "already", "end" (no more chats / top reached), "stalled".
+    setState(state, reason, code) {
       this.state = state;
-      Promise.resolve(this.hooks.state({ state, reason: reason || "" })).catch(() => {});
+      Promise.resolve(this.hooks.state({ state, reason: reason || "", code: code || "" })).catch(() => {});
     }
     pause(reason) { if (this.state === "running") { this.paused = true; this.setState("paused", reason || "Paused"); } }
     resume() { if (this.paused) { this.paused = false; this.setState("running"); } }
@@ -841,6 +875,14 @@
       while (this.paused && !this.stopped) { this.atGate = true; await sleep(250); }
       this.atGate = false;
       if (this.stopped) throw STOP;
+      // F4: a hidden window can't load chats, so wait for it instead of mistaking it for the end of the inbox.
+      if (this.cfg.waitWhenHidden !== false && typeof document !== "undefined" && document.hidden) {
+        this.hooks.state({ state: "running", reason: "Waiting: the Business Suite window is hidden (minimized or screen locked). It continues by itself when it's visible.", code: "hidden" });
+        while (document.hidden && !this.stopped && !this.paused) await sleep(1000);
+        if (this.stopped) throw STOP;
+        this.hooks.state({ state: "running", reason: "Visible again, continuing.", code: "visible" });
+        await this.gate();
+      }
     }
     async wait(ms) {
       const end = Date.now() + ms;
@@ -867,7 +909,7 @@
         if (cfg.order === "screen" && !screen) return;
         for (;;) {
           await this.gate();
-          if ((await hooks.sentToday()) >= cfg.dailyCap) { this.setState("finished", `Daily limit of ${cfg.dailyCap} reached`); return; }
+          if ((await hooks.sentToday()) >= cfg.dailyCap) { this.setState("finished", `Daily limit of ${cfg.dailyCap} reached`, "daily"); return; }
           const list = findList(cfg);
           if (!list) { this.pause("Can't find the inbox list. Open Business Suite → Inbox, then press Resume."); continue; }
           const warn = stopReason(cfg, list);
@@ -882,11 +924,22 @@
             // page only draws the rows on screen). Top-down: load older chats below.
             if (cfg.order !== "top") {
               if (await scrollUp(list)) continue;
-              this.setState("finished", "Reached the top of the inbox");
+              this.setState("finished", "Reached the top of the inbox", "end");
               return;
             }
             if (await loadMore(list, cfg)) { emptyLoads = 0; continue; }
-            if (++emptyLoads >= 3) { this.setState("finished", "No more conversations in this view"); return; }
+            if (++emptyLoads >= 3) {
+              // F4: chats may have stopped loading for a while (slow internet, page busy). Wait and try again first.
+              let more = false;
+              for (let i = 0; i < Math.max(0, +cfg.stallRetries || 0) && !more; i++) {
+                this.setState("running", `Chats stopped loading. Waiting a minute and trying again (${i + 1} of ${cfg.stallRetries}).`, "stall");
+                await this.wait(cfg.stallWaitMs || 60000);
+                more = await loadMore(findList(cfg) || list, cfg);
+              }
+              if (more) { emptyLoads = 0; continue; }
+              this.setState("finished", "No more conversations in this view", "end");
+              return;
+            }
             continue;
           }
           emptyLoads = 0;
@@ -916,7 +969,7 @@
           if (res.status === "ALREADY" && res.counted) already++;
           const stopAt = Math.max(1, Math.round(+cfg.stopAfter || 3));
           if (cfg.dupCheck !== false && cfg.stopBy !== "off" && already >= stopAt) {
-            this.setState("finished", `Stopped: ${already} chats in a row already had this message, so this run reached the people from your last run.`);
+            this.setState("finished", `Stopped: ${already} chats in a row already had this message, so this run reached the people from your last run.`, "already");
             return;
           }
           if (res.status === "SENT" || res.status === "UNKNOWN" || res.status === "TEST") await this.wait(cfg.betweenChatsSec * 1000);
@@ -945,7 +998,7 @@
         const rr = rect(r.el);
         if (rr.bottom > lr.top && rr.top + rr.height / 2 <= bottom) start = i;
       });
-      if (start < 0) { this.setState("finished", "No chats are visible in the inbox list"); return null; }
+      if (start < 0) { this.setState("finished", "No chats are visible in the inbox list", "end"); return null; }
       const below = {};
       for (const r of rows.slice(start + 1)) below[r.key] = (below[r.key] || 0) + 1;
       await hooks.state({ state: "running", reason: `Starting from “${rows[start].name}”, the lowest chat on screen, and going up.`, current: "" });
@@ -1081,6 +1134,14 @@
           while (scrollJob.paused && !scrollJob.cancel) await sleep(200);
           end += Date.now() - t0; // paused time doesn't count toward the time limit
           if (!scrollJob.cancel) report("running", "Scrolling the inbox down…");
+        }
+        if (cfg.waitWhenHidden !== false && typeof document !== "undefined" && document.hidden && !scrollJob.cancel) {
+          // F4: a hidden window can't load chats; wait instead of deciding it's the bottom.
+          report("running", `Waiting: the Business Suite window is hidden (${seen.size} chats loaded so far). It continues when it's visible.`);
+          const t0 = Date.now();
+          while (document.hidden && !scrollJob.cancel) await sleep(1000);
+          end += Date.now() - t0;
+          if (!scrollJob.cancel) report("running", "Visible again, scrolling…");
         }
         if (scrollJob.cancel) { result = { ok: true, reachedEnd: false, message: "Scrolling stopped" }; break; }
         if (still >= 2) { result = { ok: true, reachedEnd: true, message: "Reached the bottom of the inbox" }; break; }

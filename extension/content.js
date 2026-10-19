@@ -47,6 +47,76 @@
   function tell(msg) {
     chrome.runtime.sendMessage(Object.assign({ type: "fu-status" }, msg)).catch(() => {});
   }
+  // ---------- Run diary (Log tab): what happened and when, kept 30 days, also after a restart ----------
+  const DIARY_DAYS = 30, DIARY_MAX = 20000;
+  let diaryBuf = [], fileBuf = [], diaryTimer = null, run = null, lastReason = "", lastBeat = Date.now();
+  function diary(k, m) {
+    const e = { t: new Date().toISOString(), k, m: String(m == null ? "" : m), run: run ? run.id : null };
+    diaryBuf.push(e); fileBuf.push(e);
+    tell({ diary: e });
+    clearTimeout(diaryTimer);
+    diaryTimer = setTimeout(flushDiary, 1200);
+  }
+  async function flushDiary() {
+    if (!diaryBuf.length) return;
+    const add = diaryBuf; diaryBuf = [];
+    try {
+      const { diary: old = [] } = await chrome.storage.local.get("diary");
+      const cutoff = Date.now() - DIARY_DAYS * 864e5;
+      await chrome.storage.local.set({ diary: old.concat(add).filter((x) => Date.parse(x.t) >= cutoff).slice(-DIARY_MAX) });
+    } catch (_) { diaryBuf = add.concat(diaryBuf); }
+  }
+  // Also written to the PC folder once a minute (and at the end of a run): D:\FollowUp-History\log-YYYY-MM-DD.txt
+  async function flushDiaryFile() {
+    const s = (data && data.settings) || {};
+    if (!fileBuf.length || !s.backupOn || !s.backupFolder || s.diaryToFile === false) { if (!s.backupOn || s.diaryToFile === false) fileBuf = []; return; }
+    const lines = fileBuf; fileBuf = [];
+    const byDay = {};
+    for (const e of lines) {
+      const d = new Date(e.t);
+      const day = d.toLocaleDateString("en-CA");
+      (byDay[day] = byDay[day] || []).push(`${day} ${d.toLocaleTimeString("en-GB")}  ${e.k.padEnd(8)} ${e.m}`);
+    }
+    for (const [day, ls] of Object.entries(byDay)) {
+      await fileOp({ action: "appendFile", folder: s.backupFolder, name: `log-${day}.txt`, content: ls.join("\r\n") + "\r\n" });
+    }
+  }
+  setInterval(() => { flushDiaryFile(); }, 60000);
+  const busy = () => ["running", "paused"].includes(E.status()) || E.tools.scrollState() !== "idle" || !!finishAction;
+  // F1: keep the PC awake (no sleep, screen on) while something is running.
+  let awake = false;
+  function keepAwake(on) {
+    on = !!on && !(data && data.settings && data.settings.keepAwake === false);
+    if (on === awake) return;
+    awake = on;
+    chrome.runtime.sendMessage({ type: "fu-awake", on }).catch(() => {});
+    diary("AWAKE", on ? "Keeping the PC awake while FollowUp works (no sleep, screen stays on)" : "PC may sleep again (FollowUp is done)");
+  }
+  // Gaps: if nothing ran for a few minutes, the PC was probably asleep or Chrome was frozen.
+  setInterval(() => {
+    const now = Date.now();
+    if (busy() && now - lastBeat > 3 * 60000) {
+      diary("SLEEP?", `No activity for ${Math.round((now - lastBeat) / 60000)} min (PC asleep, screen locked, or Chrome frozen) · ${new Date(lastBeat).toLocaleTimeString()} → ${new Date(now).toLocaleTimeString()}`);
+    }
+    lastBeat = now;
+    keepAwake(busy());
+  }, 15000);
+  document.addEventListener("visibilitychange", () => {
+    if (!busy()) return;
+    diary("SCREEN", document.hidden ? "Business Suite window hidden (minimized, another tab, or screen locked)" : "Business Suite window visible again");
+  });
+  const FINISH_NAME = { nothing: "Do nothing", closeTab: "Close the tab", closeChrome: "Close Chrome", shutdown: "Shut down" };
+  async function saveRun(patch) {
+    if (!run) return;
+    Object.assign(run, patch);
+    try {
+      const { runs = [] } = await chrome.storage.local.get("runs");
+      const i = runs.findIndex((r) => r.id === run.id);
+      if (i >= 0) runs[i] = Object.assign({}, run); else runs.push(Object.assign({}, run));
+      await chrome.storage.local.set({ runs: runs.slice(-50) });
+    } catch (_) {}
+  }
+
   function rollDay() {
     if (data.stats.date !== today()) data.stats = freshStats();
   }
@@ -71,12 +141,37 @@
           if (++sinceBackup >= Math.max(1, +data.settings.backupEvery || 25)) backup();
         }
         if (e.help) data.problems.push({ time: e.time, name: e.name, status: e.status, reason: e.reason, code: e.code, help: e.help });
+        if (e.help) diary("PROBLEM", `${e.name} · ${e.help.what}` + (e.seen ? ` · the chat header showed “${e.seen}”` : "") + (e.reason ? ` (${e.reason})` : ""));
+        if (e.listText) diary("INFO", `Ad chat: the list showed “${e.listText}”; the chat is ${e.name}`);
+        if (run && e.status === "SENT") {
+          run.sent = (run.sent || 0) + 1;
+          if (run.sent % 50 === 0) diary("PROGRESS", `${run.sent} sent so far in this run`);
+        }
+        if (run) { const c = COUNTER[e.status]; if (c && c !== "sent") run[c] = (run[c] || 0) + 1; }
+        lastBeat = Date.now();
         save();
         tell({ entry: e, stats: data.stats });
       },
       state(s) {
+        const was = lastState;
         lastState = s;
+        lastBeat = Date.now();
         tell({ state: s, stats: data && data.stats });
+        // Run diary
+        if (s.code === "hidden" || s.code === "visible") { /* the SCREEN lines come from visibilitychange */ }
+        else if (s.state === "paused") diary("PAUSE", s.reason || "Paused");
+        else if (s.state === "running" && was && was.state === "paused" && !s.reason) diary("RESUME", "Continued");
+        else if (s.state === "running" && s.code === "stall") diary("WAIT", s.reason);
+        else if (s.state === "running" && s.reason && s.reason !== lastReason && !/…/.test(s.reason)) diary("INFO", s.reason);
+        if (s.reason) lastReason = s.reason;
+        if (s.state === "finished" || s.state === "stopped") {
+          const mins = run ? Math.max(1, Math.round((Date.now() - Date.parse(run.start)) / 60000)) : 0;
+          const tot = run ? `${run.sent || 0} sent · ${run.excluded || 0} to Done · ${run.skipped || 0} skipped · ${run.failed || 0} problems · ${mins} min` : "";
+          diary(s.state === "finished" ? "FINISH" : "STOP", `${s.state === "finished" ? "Ended" : "Stopped"}: ${s.reason || s.state}${tot ? " · " + tot : ""}`);
+          saveRun({ end: new Date().toISOString(), ended: s.reason || s.state, code: s.code || (s.state === "stopped" ? "stopped" : ""),
+            after: s.state === "stopped" ? "Nothing (stopped)" : "" });
+          flushDiary(); flushDiaryFile();
+        }
         if (s.state !== "running") save(true);
         if (s.state === "finished" || s.state === "stopped") { backup(); runLine(s); }
         // "When finished" only after a normal finish, never after Stop or a problem pause.
@@ -106,6 +201,13 @@
     });
     try {
       E.start(cfg, hooks(new Set(data.campaign.doneIds)));
+      const st = data.settings;
+      run = { id: Date.now(), start: new Date().toISOString(), message: t.name, sent: 0 };
+      const far = st.order === "bottom" ? (st.scrollHow === "all" ? "Bottom (all the way)" : st.scrollHow === "chats" ? `Bottom (about ${st.scrollChats} chats)` : `Bottom (${st.scrollCount} scrolls)`) : st.order === "screen" ? "Lowest chat on screen" : "Top";
+      diary("RUN", `Started · Message “${t.name}” · Start from ${far} · Daily limit ${st.dailyCap} (${data.stats.sent} sent today already) · ` +
+        `Already messaged ${st.dupCheck ? "On" : "Off"} · When finished: ${FINISH_NAME[st.whenFinished] || st.whenFinished}` + (st.testMode ? " · TEST MODE" : "") + ` · version ${chrome.runtime.getManifest().version}`);
+      saveRun({});
+      keepAwake(true);
       return { ok: true };
     } catch (e) {
       return { ok: false, message: e.message };
@@ -144,7 +246,13 @@
     }
     const s = (await load()).settings;
     if (!E.tools.diagnose(s).inboxList) return { ok: false, message: "Can't find the inbox list. Open Business Suite → Inbox." };
-    E.tools.loadWholeInbox(s, (p) => tell({ scroll: p }));
+    diary("SCROLL", "Scroll inbox to the bottom: started");
+    keepAwake(true);
+    E.tools.loadWholeInbox(s, (p) => {
+      tell({ scroll: p });
+      if (p.state === "done") { diary("SCROLL", `${p.message} · ${p.chats || 0} chats loaded · ${p.scrolls || 0} scrolls`); keepAwake(busy()); }
+      else if (p.state === "paused") diary("SCROLL", p.message);
+    });
     scrollStarting = false; // the scroll job is now running and blocks Resume by itself
     return { ok: true, message: "Scrolling the inbox down…" };
   }
@@ -222,6 +330,7 @@
     cancelFinish(true);
     finishAction = action;
     finishEnd = Date.now() + Math.max(5, +secs || 60) * 1000;
+    diary("AFTER", `Countdown ${Math.max(5, +secs || 60)} s, then ${FINISH_TEXT[action]}`);
     const box = finishBox();
     const sent = data && data.stats ? data.stats.sent : 0;
     box.querySelector("#fu-finish-title").textContent = `FollowUp run finished · ${sent} sent today`;
@@ -240,7 +349,10 @@
     clearTimeout(finishTimer);
     const el = document.getElementById("fu-finish");
     if (el) el.remove();
-    if (!silent && finishAction) { tell({ finish: { cancelled: true } }); toast("Cancelled. Nothing will be closed or shut down."); }
+    if (!silent && finishAction) {
+      tell({ finish: { cancelled: true } }); toast("Cancelled. Nothing will be closed or shut down.");
+      diary("AFTER", "Countdown cancelled by you"); saveRun({ after: "Cancelled by you" }); keepAwake(false);
+    }
     finishAction = null;
   }
   async function doFinish() {
@@ -249,9 +361,14 @@
     cancelFinish(true);
     tell({ finish: { done: true, action } });
     save(true);
+    diary("AFTER", `Doing it now: ${FINISH_TEXT[action]}`);
+    await saveRun({ after: FINISH_NAME[action] });
+    await flushDiary();
+    await flushDiaryFile();
     await new Promise((r) => setTimeout(r, 400));
     let r;
     try { r = await chrome.runtime.sendMessage({ type: "fu-finish-action", action }); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+    if (r && r.ok === false) { diary("PROBLEM", `When finished: couldn't ${FINISH_TEXT[action]} (${r.message || r.code || "error"})`); saveRun({ after: `${FINISH_NAME[action]} failed` }); keepAwake(false); }
     if (r && r.ok === false) {
       const help = r.code === "SHUTDOWN_HELPER" ? E.HELP.SHUTDOWN_HELPER : E.HELP.ERROR;
       const { problems = [] } = await chrome.storage.local.get("problems");
@@ -309,6 +426,7 @@
     const ok = !!(r && r.ok);
     await setBackupStatus({ ok, time: new Date().toISOString(), names: names.length, file: data.settings.backupFolder + "\\" + fileNameFor(data.tpl), error: ok ? "" : (r && r.error) || "" });
     if (!ok && (force || !backupWarned)) {
+      diary("PROBLEM", `Save names to your PC failed (${(r && r.error) || "no answer from the Windows helper"})`);
       backupWarned = true;
       data.problems.push({ time: new Date().toISOString(), name: "Save names to your PC", status: "FAILED", reason: (r && r.error) || "", code: "BACKUP_FAILED", help: E.HELP.BACKUP_FAILED });
       save(true);
@@ -344,10 +462,22 @@
     if (set.autoCheckReplies && set.whenFinished !== "nothing") {
       try { await replyRound({ auto: true, final: true }); } catch (_) {}
     }
+    // F3: only some endings close Chrome or shut down (Settings → When finished).
+    const code = s.code || "end";
+    const allowed = code === "already" ? set.finishOnAlready !== false : code === "daily" ? !!set.finishOnDaily : set.finishOnEnd !== false;
+    let action = set.whenFinished;
+    if (action !== "nothing" && !allowed) {
+      diary("AFTER", `Not doing “${FINISH_NAME[action]}”: this run ended by ${code === "daily" ? "the Daily limit" : code === "already" ? "reaching people who already got the message" : "running out of chats"}, which is switched off in Settings → When finished.`);
+      saveRun({ after: `Nothing (${FINISH_NAME[action]} not allowed for this ending)` });
+      action = "nothing";
+    }
     let msg = `${st.sent} sent today · ${st.excluded} moved to Done. ${s.reason || ""}`;
-    if (set.whenFinished !== "nothing") msg += ` Then: ${FINISH_TEXT[set.whenFinished]} in ${set.finishCountdownSec} s, unless you press Cancel.`;
-    notify("FollowUp finished", msg, set);
-    startFinish(set.whenFinished, set.finishCountdownSec);
+    if (action !== "nothing") msg += ` Then: ${FINISH_TEXT[action]} in ${set.finishCountdownSec} s, unless you press Cancel.`;
+    notify("FollowUp finished", msg, set).then((r) => {
+      if (set.notifyPC || set.notifyPhone) diary("NOTIFY", `Finished notification: ${[set.notifyPC && (r && r.pcOk !== false ? "PC ✓" : "PC ✗"), set.notifyPhone && (r && r.phoneOk ? "phone ✓" : "phone ✗ " + ((r && r.error) || ""))].filter(Boolean).join(" · ")}`);
+    });
+    if (action === "nothing") { if (!set.whenFinished || set.whenFinished === "nothing") saveRun({ after: "Nothing (Do nothing)" }); keepAwake(false); return; }
+    startFinish(action, set.finishCountdownSec);
   }
 
   // ---------- auto-replies to people who answered the follow-up (Buyers tab) ----------
@@ -466,6 +596,7 @@
       save(true);
       if (s.autoLabel) msg += " " + (await labelHot(s));
       buyersTell("done", msg);
+      diary("REPLIES", (auto ? "Automatic check: " : "Check replies: ") + msg);
       if (!auto) toast("Replies checked");
       return { ok: true, message: msg };
     }, final);
@@ -548,6 +679,7 @@
         case "scrollLatestShortcut": return withToast(async () => E.tools.scrollChatToLatest((await load()).settings))();
         case "scrollLatest": return E.tools.scrollChatToLatest((await load()).settings);
         case "diagnose": return { ok: true, report: E.tools.diagnose((await load()).settings) };
+        case "flushDiary": await flushDiary(); return { ok: true };
         default: return { ok: false, message: "Unknown command" };
       }
     })().then(reply, (e) => reply({ ok: false, message: String(e && e.message || e) }));

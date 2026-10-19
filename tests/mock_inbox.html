@@ -120,7 +120,8 @@
           : `<img class="avatar" src="${AV(c.color)}" alt="">`) +
         `<div class="meta"><div class="top"><span class="name"></span><span class="time">${c.time}</span></div><div class="preview"></div></div>` +
         `<button class="rowdone" aria-label="Move to done">✓</button>`;
-      r.querySelector(".name").textContent = c.name;
+      // flags.adFor: a chat started from an ad shows the customer's question where the name normally is
+      r.querySelector(".name").textContent = mock.flags.adFor === c.name ? "I am very interested. How would I become part of this opportunity?" : c.name;
       r.querySelector(".preview").textContent = (last.me ? "You: " : "") + last.text;
       rowsEl.appendChild(r);
     }
@@ -223,7 +224,14 @@
       const d = document.createElement("div");
       d.className = "b" + (m.me ? " me" : "");
       if (m.img) d.innerHTML = `<img src="${m.img}">`; else d.textContent = m.text;
-      box.appendChild(d);
+      if (mock.flags.fullRows) {
+        // like the real Business Suite: every message sits in its own full-width row
+        const row = document.createElement("div");
+        row.className = "mrow";
+        row.style.cssText = "display:flex;flex-direction:column;min-height:44px;width:100%";
+        row.appendChild(d);
+        box.appendChild(row);
+      } else box.appendChild(d);
     }
     box.scrollTop = 0; // starts at the top, so "scroll to latest" has work to do
   }
