@@ -24,7 +24,7 @@ START = """async (cfg) => {
   return { state, states: t.states, log: t.log, sent: t.sent };
 }"""
 
-FAST = {"stepDelayMs": 150, "betweenChatsSec": 0, "pageTimeoutMs": 2500}
+FAST = {"stepDelayMs": 150, "betweenChatsSec": 0, "pageTimeoutMs": 2500, "stallRetries": 0}
 
 
 def run(page, **cfg):
@@ -520,3 +520,10 @@ def test_end_reasons_and_waiting_while_hidden(page):
     res = run(page, dailyCap=3)
     assert any(s.get("code") == "hidden" for s in res["states"]) and any(s.get("code") == "visible" for s in res["states"])
     assert res["states"][-1]["code"] == "daily" and len(mock(page)["sent"]) == 5  # 2 + 3
+
+
+def test_waits_and_retries_before_deciding_the_inbox_ended(page):
+    res = run(page, stallRetries=2, stallWaitMs=400, maxWaitMs=180000)
+    codes = [s.get("code") for s in res["states"]]
+    assert codes.count("stall") == 2  # tried twice more before finishing
+    assert res["states"][-1]["code"] == "end" and res["states"][-1]["reason"] == "No more conversations in this view"

@@ -320,7 +320,8 @@ def test_scroll_settings_and_when_finished_countdown(ext):
     panel.select_option("#scHow", "count")
     panel.locator("#scrollBox").screenshot(path=str(SHOTS / "option-a-scroll-settings.png"))
 
-    # Countdown after a normal finish; Cancel stops it
+    # Countdown after a normal finish; Cancel stops it (these runs end by the Daily limit, so allow that ending)
+    panel.check("#foDaily")
     panel.check("input[name=whenFinished][value=closeTab]")
     panel.click("#start")
     inbox.wait_for_selector("#fu-finish", timeout=120_000)

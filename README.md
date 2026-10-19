@@ -63,6 +63,29 @@ Safety rules built into both versions:
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
    by mistake. The badge at the top says **Ready** when it's connected.
 
+## New in 1.8.0
+
+* **Log tab (run diary).** Everything FollowUp does, with times: each run's start (with the settings used),
+  pauses, problems (including the name the chat header showed), the window being hidden, gaps where the PC slept,
+  **why the run ended**, and what happened after (countdown, shutdown, notification). **Last runs** at the top
+  shows the last 5 runs with how each ended. Kept 30 days, also after a restart or shutdown. **Copy for Claude**
+  copies the last run so you can paste it in a message. With the Windows helper, it's also saved daily to
+  `D:\FollowUp-History\log-YYYY-MM-DD.txt`.
+* **Keep the PC awake** while a run or scroll is going (Settings → 1). No sleep, screen stays on; back to normal after.
+* **Choose which endings do "When finished"** (Settings → 5): reached people who already got the message,
+  no more chats, Daily limit. By default the Daily limit **doesn't** close Chrome or shut down.
+* **Never mistakes a hidden window for the end.** While the Business Suite window is hidden (minimized, screen
+  locked) it waits and continues by itself. When chats stop loading it waits a minute and retries (3 times)
+  before deciding the inbox has ended.
+* **Narrow windows:** the inbox list is never confused with the open chat (before, in a half-screen window,
+  "Scroll inbox to the bottom" could scroll the chat instead).
+* **Ad chats:** chats started from an ad, where the list shows the customer's question instead of the name,
+  now use the name shown at the top of the chat.
+
+Update the Windows helper once (double-click `windows\Setup-FollowUp.bat`) so it can write the daily Log file.
+
+![Log tab](docs/screenshots/option-a-log-tab.png)
+
 ## New in 1.7.0 (extension)
 
 ### Stop when it reaches people who already got this message
