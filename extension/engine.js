@@ -61,7 +61,7 @@
     finishCountdownSec: 60,
     // "Already messaged" (Settings): never send the same message twice, and stop when the run reaches
     // people who already got it (chats you message jump to the top, so that's where the last run started).
-    dupCheck: true, // don't send if this message is already in the open chat
+    dupCheck: false, // off = works exactly like 1.6.0; on = don't send if FollowUp already sent this message to them
     stopBy: "both", // "name", "message", "both" (name and message), or "off" (only skip, never stop)
     stopAfter: 3, // stop after this many already-messaged chats in a row
     onlyIfLastFromMe: true, // skip chats where the customer wrote last

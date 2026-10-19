@@ -433,7 +433,10 @@ def test_already_messaged_stop_notifies_and_saves_names_to_a_folder(ext):
         sw.evaluate("() => { self.__notes = []; chrome.notifications.create = async (id, o) => { self.__notes.push(o); return id; }; }")
         _quick_run_settings(panel, 3)
         # Defaults the user chose
-        assert panel.is_checked("#dCheck") and panel.is_checked("input[name=stopBy][value=both]")
+        # Off by default: works exactly like 1.6.0, and the stop options are hidden
+        assert not panel.is_checked("#dCheck") and panel.is_visible("#dOffNote") and not panel.is_visible("#dAfter")
+        panel.check("#dCheck")
+        assert panel.is_checked("input[name=stopBy][value=both]")
         assert panel.input_value("#dAfter") == "3" and panel.input_value("#bkFolder") == "D:\\FollowUp-History"
         assert panel.is_checked("#nPC") and not panel.is_checked("#nPhone")
         panel.locator("#dupBox").screenshot(path=str(SHOTS / "option-a-already-messaged.png"))
@@ -487,6 +490,7 @@ def test_names_come_back_from_the_folder_after_chrome_forgets_them(ext):
         names = [inbox.evaluate("(i) => __mock.convs[i].name", i) for i in (2, 4, 5)]  # Gabriella, Beroro, ROBIN: the first 3 that can be messaged
         (folder / "Message 1.csv").write_text("Name,Sent at\r\n" + "".join(f'"{n}","2026-10-01"\r\n' for n in names), encoding="utf-8-sig")
         _quick_run_settings(panel, 20)
+        panel.check("#dCheck")
         panel.check("input[name=stopBy][value=name]")
         _set(panel, "#bkFolder", str(folder))
         panel.click("#start")

@@ -72,7 +72,7 @@ it has reached the people from your last run, and everything above is done. **Se
 
 | Setting | Default | What it does |
 |---|---|---|
-| Don't send if FollowUp already sent this message to them | On | Never sends the same message twice: the name is on this message's list *and* the message is in the chat. An old broadcast with the same words (that FollowUp didn't send) still gets the follow-up. Shows **ALREADY** in Activity. |
+| Don't send if FollowUp already sent this message to them | **Off** (works exactly like 1.6.0) | Never sends the same message twice: the name is on this message's list *and* the message is in the chat. An old broadcast with the same words (that FollowUp didn't send) still gets the follow-up. Shows **ALREADY** in Activity. |
 | Stop by name and message | ✓ default | Counts a chat only when the name is on this message's list *and* the message is in the chat (safest) |
 | Stop by message | | Any chat that already has these words counts, even an old broadcast or one sent by hand. Use it only if you never re-send the same words. |
 | Stop by name | | Decides from the inbox list without opening the chat (fastest) |

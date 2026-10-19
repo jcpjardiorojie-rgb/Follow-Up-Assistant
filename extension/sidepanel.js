@@ -13,7 +13,7 @@ const DEF = {
   coldWords: FollowUpEngine.DEFAULTS.coldWords, labelName: "Hot lead", autoLabel: true,
   scrollHow: "count", scrollCount: 25, scrollChats: 500, scrollWaitSec: 1.5, unstickRetries: 2, loadAllMaxMinutes: 30,
   buttonUsesScrollSettings: true, whenFinished: "nothing", finishCountdownSec: 60,
-  dupCheck: true, stopBy: "both", stopAfter: 3, backupOn: true, backupFolder: FollowUpEngine.DEFAULTS.backupFolder,
+  dupCheck: false, stopBy: "both", stopAfter: 3, backupOn: true, backupFolder: FollowUpEngine.DEFAULTS.backupFolder,
   notifyPC: true, notifyPhone: false, ntfyTopic: "", notifyOnPause: true, ntfyServer: "https://ntfy.sh",
   replyMode: "ask", autoCheckReplies: false, autoCheckMinutes: 10,
 };
@@ -25,6 +25,8 @@ async function loadAll() {
   const d = await chrome.storage.local.get(["settings", "template", "templates", "activeTemplate", "stats", "log", "campaign", "problems", "contacts", "history", "replies", "backupStatus"]);
   showProblems(d.problems || []);
   settings = Object.assign({}, DEF, d.settings || {});
+  // 1.7.2: "Already messaged" starts Off for everyone (works exactly like 1.6.0). Turn it on in Settings if wanted.
+  if (!settings.dupOff172) { settings.dupCheck = false; settings.dupOff172 = true; saveSettings(); }
   // Saved messages. The single message from older versions becomes "Message 1".
   templates = d.templates && d.templates.length ? d.templates
     : [Object.assign({ id: "t" + Date.now(), name: "Message 1", text: DEF.template, imageDataUrl: "", imageName: "" }, d.template || {})];

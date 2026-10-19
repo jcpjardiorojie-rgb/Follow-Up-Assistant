@@ -15,6 +15,11 @@
   async function load() {
     const d = await chrome.storage.local.get(["settings", "template", "templates", "activeTemplate", "campaign", "stats", "log", "problems", "contacts", "history", "replies"]);
     const stats = d.stats && d.stats.date === today() ? d.stats : freshStats();
+    // 1.7.2: "Already messaged" starts Off for everyone (works exactly like 1.6.0), once.
+    if (d.settings && !d.settings.dupOff172) {
+      d.settings = Object.assign({}, d.settings, { dupCheck: false, dupOff172: true });
+      chrome.storage.local.set({ settings: d.settings });
+    }
     return {
       settings: Object.assign({}, E.DEFAULTS, d.settings || {}),
       template: d.template || { text: E.DEFAULTS.template, imageDataUrl: "", imageName: "" },

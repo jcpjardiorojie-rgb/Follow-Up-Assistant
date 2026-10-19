@@ -389,7 +389,7 @@ def test_stops_when_it_reaches_people_who_already_got_this_message(page):
     assert len(names) == 5
     # A new campaign (memory cleared): the 5 chats with this message are at the top now.
     page.evaluate("window.__t = null")
-    res = run(page, stopBy="message", stopAfter=3)
+    res = run(page, dupCheck=True, stopBy="message", stopAfter=3)
     assert res["state"] == "finished" and "3 chats in a row already had this message" in res["states"][-1]["reason"]
     assert [e["name"] for e in already(res["log"])] == names[::-1][:3] and all(e["counted"] for e in already(res["log"]))
     sent_ids = [s["id"] for s in mock(page)["sent"]]
@@ -400,7 +400,7 @@ def test_stop_by_name_decides_from_the_list_without_opening(page):
     first = run(page, dailyCap=4)
     names = [e["name"] for e in first["log"] if e["status"] == "SENT"]
     page.evaluate("window.__t = null")
-    res = run(page, stopBy="name", stopAfter=3, names=names)
+    res = run(page, dupCheck=True, stopBy="name", stopAfter=3, names=names)
     hits = already(res["log"])
     assert res["state"] == "finished" and len(hits) == 3
     assert all(e["id"] is None for e in hits)  # chat never opened
@@ -412,7 +412,7 @@ def test_stop_by_name_and_message_needs_both(page):
     page.evaluate("window.__t = null")
     # Only 2 of the 3 names are on FollowUp's list: the third has the words, but FollowUp didn't send it to
     # that name, so it isn't treated as already messaged.
-    res = run(page, stopBy="both", stopAfter=3, names=names[:2], dailyCap=8)
+    res = run(page, dupCheck=True, stopBy="both", stopAfter=3, names=names[:2], dailyCap=8)
     hits = already(res["log"])
     assert [(e["name"], e["counted"]) for e in hits] == [(names[1], True), (names[0], True)]
     assert res["states"][-1]["reason"].startswith("Daily limit")  # never 3 counted in a row, so it kept going
@@ -422,7 +422,7 @@ def test_off_still_never_sends_the_same_message_twice(page):
     first = run(page, dailyCap=4)
     names = [e["name"] for e in first["log"] if e["status"] == "SENT"]
     page.evaluate("window.__t = null")
-    res = run(page, stopBy="off", dailyCap=3, names=names)
+    res = run(page, dupCheck=True, stopBy="off", dailyCap=3, names=names)
     assert len(already(res["log"])) == 4 and res["states"][-1]["reason"].startswith("Daily limit")
     sent_ids = [s["id"] for s in mock(page)["sent"]]
     assert len(sent_ids) == len(set(sent_ids)) == 7
@@ -464,7 +464,7 @@ def test_auto_reply_goes_only_to_people_who_wrote_last(page):
 
 def test_old_broadcast_with_the_same_words_still_gets_the_follow_up(page):
     # Every practice chat ends with an old "*GOOD NEWS!" broadcast that FollowUp never sent.
-    res = run(page, template="*GOOD NEWS! There's more to explore with our new package", order="bottom", dailyCap=5)
+    res = run(page, dupCheck=True, template="*GOOD NEWS! There's more to explore with our new package", order="bottom", dailyCap=5)
     assert [e["status"] for e in res["log"]][:2] == ["SENT", "SENT"]  # starts at the bottom, no skipping up
     assert not already(res["log"]) and len(mock(page)["sent"]) == 5
 
