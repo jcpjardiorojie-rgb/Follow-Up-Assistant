@@ -234,6 +234,17 @@ If you install both versions, give them different keys so one key press doesn't 
 
 ![Option A shortcuts](docs/screenshots/option-a-shortcuts.png)
 
+### Settings, in folding sections (1.7.3)
+
+Settings is split into 7 sections in the order you set up a run. Each closed section shows its current values on
+one line, so you can check everything without opening anything. Open only the one you need; the panel remembers
+which ones you left open. Each section has **Reset this section** (your ntfy topic is never reset).
+
+1. Start & limits · 2. Scrolling · 3. Who gets the message (incl. Already messaged) · 4. Sending ·
+5. When finished & notifications · 6. Windows helper & saving names · 7. Advanced: words it looks for
+
+![Settings sections](docs/screenshots/option-a-settings-sections.png)
+
 ### Settings, in plain words
 
 | Setting | What it does |

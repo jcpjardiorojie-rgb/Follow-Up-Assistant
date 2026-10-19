@@ -131,86 +131,128 @@
 
 <details class="card" id="settingsBox">
   <summary><h2>Settings</h2><span class="hint">Applied the next time you press Start</span></summary>
-  <div class="grid">
-    <label>Seconds between chats<input id="sBetween" type="number" min="0" step="1"></label>
-    <label>Wait after opening a chat (sec)<input id="sStep" type="number" min="0.3" step="0.1"></label>
-    <label>Daily limit<input id="sCap" type="number" min="1" step="1"></label>
-    <label>Start from<select id="sOrder"><option value="top">Top (newest first)</option><option value="bottom">Bottom: scroll down first (see Scrolling), then go up</option><option value="screen">Lowest chat on screen now (no scrolling), then up</option></select></label>
-  </div>
-  <label class="check"><input id="sLastMine" type="checkbox"> Only follow up when the last message is mine <span class="hint">(skips customers who replied)</span></label>
-  <label class="check"><input id="sSentDone" type="checkbox"> Move chats to Done after sending</label>
-  <label class="check"><input id="sImgReq" type="checkbox"> Don't send if the image fails to attach</label>
-  <label class="check test"><input id="sTest" type="checkbox"> Test mode: fill the message box, but never press Send or Done</label>
-  <fieldset class="group" id="dupBox">
-    <legend>Already messaged</legend>
-    <label class="check"><input id="dCheck" type="checkbox"> <b>On:</b> don't send if FollowUp already sent this message to them</label>
-    <p class="hint" id="dOffNote" hidden>Off: works like before version 1.7. No checking and no stopping; only “Start from” and the Daily limit decide.</p>
-    <div id="dOptions">
-    <p class="hint">Stop the run when it reaches people who already got this message (that's where your last run started):</p>
-    <div class="radios">
-      <label class="check"><input type="radio" name="stopBy" value="both"> Stop by name and message <span class="hint">(safest)</span></label>
-      <label class="check"><input type="radio" name="stopBy" value="message"> Stop by message <span class="hint">(any chat with these words, even an old broadcast or one sent by hand)</span></label>
-      <label class="check"><input type="radio" name="stopBy" value="name"> Stop by name <span class="hint">(fastest: doesn't open the chat)</span></label>
-      <label class="check"><input type="radio" name="stopBy" value="off"> Don't stop, just skip them</label>
+  <div class="secs">
+
+  <details class="sec" data-sec="start">
+    <summary><span class="sect">1 · Start &amp; limits</span><small class="sum" id="sum_start"></small></summary>
+    <div class="secbody">
+      <div class="grid">
+        <label class="wide">Start from<select id="sOrder"><option value="top">Top (newest first)</option><option value="bottom">Bottom: scroll down first (see Scrolling), then go up</option><option value="screen">Lowest chat on screen now (no scrolling), then up</option></select></label>
+        <label>Daily limit<input id="sCap" type="number" min="1" step="1"></label>
+        <label>Seconds between chats<input id="sBetween" type="number" min="0" step="1"></label>
+      </div>
+      <label class="check test"><input id="sTest" type="checkbox"> Test mode: fill the message box, but never press Send or Done</label>
+      <button class="small reset" data-reset="start">Reset this section</button>
     </div>
-    <div class="grid"><label>Stop after this many in a row<input id="dAfter" type="number" min="1" max="50" step="1"></label></div>
-    <p class="hint">Then “When the run is finished” runs (for example the shutdown countdown). Chats messaged earlier in the same run never count.</p>
-    </div>
-    <label class="check"><input id="bkOn" type="checkbox"> Also save the names to a folder on this PC <span class="hint">(needs the Windows helper)</span></label>
-    <label class="hint">Folder<input id="bkFolder" class="field" spellcheck="false"></label>
-    <div class="row"><button id="bkNow" class="small">Save now</button><span id="bkStatus" class="hint"></span></div>
-  </fieldset>
-  <fieldset class="group" id="scrollBox">
-    <legend>Scrolling</legend>
-    <label class="hint" for="scHow">How far to scroll before sending (used by Start from: Bottom)</label>
-    <select id="scHow" class="field">
-      <option value="count">A set number of scrolls</option>
-      <option value="chats">Until about a number of chats are loaded</option>
-      <option value="all">All the way to the bottom</option>
-    </select>
-    <div class="grid">
-      <label>Number of scrolls<input id="scCount" type="number" min="1" step="1"></label>
-      <label>About how many chats<input id="scChats" type="number" min="1" step="10"></label>
-      <label>Wait between scrolls (sec)<input id="scWait" type="number" min="0" step="0.1"></label>
-      <label>If stuck: scroll up &amp; retry (times)<input id="scRetry" type="number" min="0" max="10" step="1"></label>
-      <label>Give up scrolling after (min)<input id="scMax" type="number" min="1" step="1"></label>
-    </div>
-    <label class="check"><input id="scButton" type="checkbox"> The “Scroll inbox to the bottom” button uses these settings too</label>
-    <p class="hint">For no scrolling at all, choose Start from: Lowest chat on screen.</p>
-  </fieldset>
-  <fieldset class="group" id="finishBox">
-    <legend>When the run is finished</legend>
-    <div class="radios">
-      <label class="check"><input type="radio" name="whenFinished" value="nothing"> Do nothing</label>
-      <label class="check"><input type="radio" name="whenFinished" value="closeTab"> Close the Business Suite tab</label>
-      <label class="check"><input type="radio" name="whenFinished" value="closeChrome"> Close Chrome</label>
-      <label class="check"><input type="radio" name="whenFinished" value="shutdown"> Shut down the computer <span class="hint">(needs the Windows helper)</span></label>
-    </div>
-    <div class="grid"><label>Countdown before it happens (sec)<input id="fiSecs" type="number" min="10" step="5"></label></div>
-    <div class="row"><button id="fiCheck" class="small">Check Windows helper</button><span id="fiStatus" class="hint"></span></div>
-    <p class="hint">Only after a normal finish (daily limit, no more chats, or reached people who already got it),
-      never after Stop or a problem pause. A countdown with Cancel shows on the Business Suite page first.</p>
-    <div class="notify" id="notifyBox">
-      <b>Tell me when it's done</b>
-      <label class="check"><input id="nPC" type="checkbox"> Windows pop-up with sound</label>
-      <label class="check"><input id="nPhone" type="checkbox"> My phone (free ntfy app)</label>
-      <label class="hint" id="nTopicRow">ntfy topic (type the same name in the ntfy app)<input id="nTopic" class="field" spellcheck="false" placeholder="for example rojie-followup-7q2"></label>
-      <label class="check"><input id="nPause" type="checkbox"> Also when a run pauses because of a problem</label>
-      <div class="row"><button id="nTest" class="small">Send test notification</button><span id="nStatus" class="hint"></span></div>
-      <p class="hint">Phone setup, once: install <b>ntfy</b> from the Play Store or App Store → tap <b>+</b> → type a private
-        topic name only you know → type the same name above → press Send test notification.</p>
-    </div>
-  </fieldset>
-  <details class="adv">
-    <summary>Advanced: words the app looks for</summary>
-    <label>"Can't message" banner text (one per line)<textarea id="aBlocked" rows="2"></textarea></label>
-    <label>Names that go straight to Done (one per line)<textarea id="aNames" rows="2"></textarea></label>
-    <label>Meta warnings that pause the run (one per line)<textarea id="aStop" rows="4"></textarea></label>
-    <label>🔥 Hot buyer words (one per line)<textarea id="aHot" rows="4"></textarea></label>
-    <label>🙂 Warm words (one per line)<textarea id="aWarm" rows="3"></textarea></label>
-    <label>❄️ Not interested words (one per line)<textarea id="aCold" rows="3"></textarea></label>
-    <button id="aReset" class="small">Reset to defaults</button>
   </details>
+
+  <details class="sec" data-sec="scroll">
+    <summary><span class="sect">2 · Scrolling</span><small class="sum" id="sum_scroll"></small></summary>
+    <div class="secbody" id="scrollBox">
+      <label class="hint" for="scHow">How far to scroll before sending (used by Start from: Bottom)</label>
+      <select id="scHow" class="field">
+        <option value="count">A set number of scrolls</option>
+        <option value="chats">Until about a number of chats are loaded</option>
+        <option value="all">All the way to the bottom</option>
+      </select>
+      <div class="grid">
+        <label>Number of scrolls<input id="scCount" type="number" min="1" step="1"></label>
+        <label>About how many chats<input id="scChats" type="number" min="1" step="10"></label>
+        <label>Wait between scrolls (sec)<input id="scWait" type="number" min="0" step="0.1"></label>
+        <label>If stuck: scroll up &amp; retry (times)<input id="scRetry" type="number" min="0" max="10" step="1"></label>
+        <label>Give up scrolling after (min)<input id="scMax" type="number" min="1" step="1"></label>
+      </div>
+      <label class="check"><input id="scButton" type="checkbox"> The “Scroll inbox to the bottom” button uses these settings too</label>
+      <p class="hint">For no scrolling at all, choose Start from: Lowest chat on screen.</p>
+      <button class="small reset" data-reset="scroll">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="who">
+    <summary><span class="sect">3 · Who gets the message</span><small class="sum" id="sum_who"></small></summary>
+    <div class="secbody" id="dupBox">
+      <label class="check"><input id="sLastMine" type="checkbox"> Only follow up when the last message is mine <span class="hint">(skips customers who replied)</span></label>
+      <p class="hint">“Facebook user” chats and chats you can't message are always moved to Done.</p>
+      <b class="subhead">Already messaged</b>
+      <label class="check"><input id="dCheck" type="checkbox"> <b>On:</b> don't send if FollowUp already sent this message to them</label>
+      <p class="hint" id="dOffNote" hidden>Off: works like before version 1.7. No checking and no stopping; only “Start from” and the Daily limit decide.</p>
+      <div id="dOptions" class="secbody inner">
+        <p class="hint">Stop the run when it reaches people who already got this message (that's where your last run started):</p>
+        <div class="radios">
+          <label class="check"><input type="radio" name="stopBy" value="both"> Stop by name and message <span class="hint">(safest)</span></label>
+          <label class="check"><input type="radio" name="stopBy" value="message"> Stop by message <span class="hint">(any chat with these words, even an old broadcast or one sent by hand)</span></label>
+          <label class="check"><input type="radio" name="stopBy" value="name"> Stop by name <span class="hint">(fastest: doesn't open the chat)</span></label>
+          <label class="check"><input type="radio" name="stopBy" value="off"> Don't stop, just skip them</label>
+        </div>
+        <div class="grid"><label>Stop after this many in a row<input id="dAfter" type="number" min="1" max="50" step="1"></label></div>
+        <p class="hint">Then “When the run is finished” runs (for example the shutdown countdown). Chats messaged earlier in the same run never count.</p>
+      </div>
+      <button class="small reset" data-reset="who">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="send">
+    <summary><span class="sect">4 · Sending</span><small class="sum" id="sum_send"></small></summary>
+    <div class="secbody">
+      <div class="grid"><label>Wait after opening a chat (sec)<input id="sStep" type="number" min="0.3" step="0.1"></label></div>
+      <label class="check"><input id="sImgReq" type="checkbox"> Don't send if the image fails to attach</label>
+      <label class="check"><input id="sSentDone" type="checkbox"> Move chats to Done after sending</label>
+      <button class="small reset" data-reset="send">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="finish">
+    <summary><span class="sect">5 · When finished &amp; notifications</span><small class="sum" id="sum_finish"></small></summary>
+    <div class="secbody" id="finishBox">
+      <div class="radios">
+        <label class="check"><input type="radio" name="whenFinished" value="nothing"> Do nothing</label>
+        <label class="check"><input type="radio" name="whenFinished" value="closeTab"> Close the Business Suite tab</label>
+        <label class="check"><input type="radio" name="whenFinished" value="closeChrome"> Close Chrome</label>
+        <label class="check"><input type="radio" name="whenFinished" value="shutdown"> Shut down the computer <span class="hint">(needs the Windows helper)</span></label>
+      </div>
+      <div class="grid"><label>Countdown before it happens (sec)<input id="fiSecs" type="number" min="10" step="5"></label></div>
+      <p class="hint">Only after a normal finish (daily limit, no more chats, or reached people who already got it),
+        never after Stop or a problem pause. A countdown with Cancel shows on the Business Suite page first.</p>
+      <div class="notify" id="notifyBox">
+        <b>Tell me when it's done</b>
+        <label class="check"><input id="nPC" type="checkbox"> Windows pop-up with sound</label>
+        <label class="check"><input id="nPhone" type="checkbox"> My phone (free ntfy app)</label>
+        <label class="hint" id="nTopicRow">ntfy topic (type the same name in the ntfy app)<input id="nTopic" class="field" spellcheck="false" placeholder="for example rojie-followup-7q2"></label>
+        <label class="check"><input id="nPause" type="checkbox"> Also when a run pauses because of a problem</label>
+        <div class="row"><button id="nTest" class="small">Send test notification</button><span id="nStatus" class="hint"></span></div>
+        <p class="hint">Phone setup, once: install <b>ntfy</b> from the Play Store or App Store → tap <b>+</b> → type a private
+          topic name only you know → type the same name above → press Send test notification.</p>
+      </div>
+      <button class="small reset" data-reset="finish">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="helper">
+    <summary><span class="sect">6 · Windows helper &amp; saving names</span><small class="sum" id="sum_helper"></small></summary>
+    <div class="secbody" id="helperBox">
+      <p class="hint">The helper is installed by double-clicking <b>windows\Setup-FollowUp.bat</b>. It does the shutdown and saves names to your PC.</p>
+      <div class="row"><button id="fiCheck" class="small">Check Windows helper</button><span id="fiStatus" class="hint"></span></div>
+      <label class="check"><input id="bkOn" type="checkbox"> Save the names that got each message to a folder on this PC</label>
+      <label class="hint">Folder<input id="bkFolder" class="field" spellcheck="false"></label>
+      <div class="row"><button id="bkNow" class="small">Save now</button><span id="bkStatus" class="hint"></span></div>
+      <button class="small reset" data-reset="helper">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="adv">
+    <summary><span class="sect">7 · Advanced: words it looks for</span><small class="sum" id="sum_adv"></small></summary>
+    <div class="secbody adv">
+      <label>"Can't message" banner text (one per line)<textarea id="aBlocked" rows="2"></textarea></label>
+      <label>Names that go straight to Done (one per line)<textarea id="aNames" rows="2"></textarea></label>
+      <label>Meta warnings that pause the run (one per line)<textarea id="aStop" rows="4"></textarea></label>
+      <label>🔥 Hot buyer words (one per line)<textarea id="aHot" rows="4"></textarea></label>
+      <label>🙂 Warm words (one per line)<textarea id="aWarm" rows="3"></textarea></label>
+      <label>❄️ Not interested words (one per line)<textarea id="aCold" rows="3"></textarea></label>
+      <button id="aReset" class="small reset">Reset this section</button>
+    </div>
+  </details>
+
+  </div>
 </details>
 
 <section class="card">

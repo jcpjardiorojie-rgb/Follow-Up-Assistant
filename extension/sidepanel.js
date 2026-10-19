@@ -279,6 +279,7 @@ function showDupFields() {
 }
 function showScrollFields() {
   showDupFields();
+  showSummaries();
   const how = $("scHow").value;
   $("scCount").closest("label").hidden = how !== "count";
   $("scChats").closest("label").hidden = how !== "chats";
@@ -493,6 +494,55 @@ chrome.storage.onChanged.addListener((ch) => {
   if (ch.backupStatus) showBackup(ch.backupStatus.newValue);
 });
 
+
+
+// ---------- Settings sections (L1): one-line summaries, remembered open sections, reset buttons ----------
+const ORDER_NAME = { top: "Top", bottom: "Bottom", screen: "Lowest on screen" };
+const STOP_NAME = { both: "name + message", message: "message", name: "name", off: "skip only" };
+const FINISH_NAME = { nothing: "Do nothing", closeTab: "Close tab", closeChrome: "Close Chrome", shutdown: "Shut down" };
+function showSummaries() {
+  const s = settings;
+  const put = (k, t) => { const el = $("sum_" + k); if (el) { el.textContent = t; el.title = t; } };
+  put("start", `${ORDER_NAME[s.order] || s.order} · ${s.dailyCap}/day · ${s.betweenChatsSec} s` + (s.testMode ? " · TEST MODE" : ""));
+  const far = s.scrollHow === "all" ? "to the bottom" : s.scrollHow === "chats" ? `about ${s.scrollChats} chats` : `${s.scrollCount} scrolls`;
+  put("scroll", `${far} · ${s.scrollWaitSec} s · ${s.unstickRetries} retries`);
+  put("who", `${s.onlyIfLastFromMe ? "Last message mine" : "Everyone"} · Already messaged: ${s.dupCheck ? `On (${STOP_NAME[s.stopBy]}, ${s.stopAfter})` : "Off"}`);
+  put("send", `Wait ${(s.stepDelayMs / 1000).toFixed(1)} s · image ${s.imageRequired ? "required" : "optional"}` + (s.moveSentToDone ? " · sent → Done" : ""));
+  const tell = [s.notifyPC && "PC", s.notifyPhone && "phone"].filter(Boolean).join(" + ") || "no notifications";
+  put("finish", `${FINISH_NAME[s.whenFinished] || s.whenFinished}${s.whenFinished !== "nothing" ? ` · ${s.finishCountdownSec} s` : ""} · ${tell}`);
+  put("helper", s.backupOn ? s.backupFolder : "Saving names: off");
+}
+const SECTION_KEYS = {
+  start: ["order", "dailyCap", "betweenChatsSec", "testMode"],
+  scroll: ["scrollHow", "scrollCount", "scrollChats", "scrollWaitSec", "unstickRetries", "loadAllMaxMinutes", "buttonUsesScrollSettings"],
+  who: ["onlyIfLastFromMe", "dupCheck", "stopBy", "stopAfter"],
+  send: ["stepDelayMs", "imageRequired", "moveSentToDone"],
+  finish: ["whenFinished", "finishCountdownSec", "notifyPC", "notifyPhone", "notifyOnPause"], // your ntfy topic is kept
+  helper: ["backupOn", "backupFolder"],
+};
+for (const b of document.querySelectorAll("button.reset[data-reset]")) {
+  b.addEventListener("click", () => {
+    const sec = b.dataset.reset;
+    const title = b.closest("details.sec").querySelector(".sect").textContent.replace(/^\d+ · /, "");
+    ask(`Reset “${title}” to the default values?`, () => {
+      for (const k of SECTION_KEYS[sec]) settings[k] = Array.isArray(DEF[k]) ? [...DEF[k]] : DEF[k];
+      saveSettings();
+      fillForm();
+    });
+  });
+}
+// Remember which sections are open (first time: only "Start & limits").
+(async () => {
+  let open = ["start"];
+  try { const d = await chrome.storage.local.get("openSections"); if (Array.isArray(d.openSections)) open = d.openSections; } catch (_) {}
+  for (const d of document.querySelectorAll("details.sec")) d.open = open.includes(d.dataset.sec);
+  for (const d of document.querySelectorAll("details.sec")) {
+    d.addEventListener("toggle", () => {
+      const now = [...document.querySelectorAll("details.sec")].filter((x) => x.open).map((x) => x.dataset.sec);
+      chrome.storage.local.set({ openSections: now }).catch(() => {});
+    });
+  }
+})();
 
 // ---------- Already messaged: saving names to the PC ----------
 function showBackup(b) {

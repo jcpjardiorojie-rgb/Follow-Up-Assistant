@@ -9,6 +9,13 @@ EXT = str(ROOT / "extension")
 SHOTS = ROOT / "docs" / "screenshots"
 
 
+def _open_settings(panel):
+    """Open Settings and all its sections (they fold since version 1.7.3)."""
+    panel.evaluate("""() => { const b = document.getElementById('settingsBox'); b.open = true;
+      b.querySelectorAll('details.sec').forEach((d) => { d.open = true; }); }""")
+
+
+
 @pytest.fixture
 def ext(pw):
     with tempfile.TemporaryDirectory() as profile:
@@ -35,7 +42,7 @@ def test_extension_runs_a_campaign(ext):
     panel.fill("#tplText", "Hi {first_name}! Just following up po 😊")
     panel.set_input_files("#imgFile", str(TINY_PNG))
     panel.wait_for_selector("#imgRemove:not([hidden])")
-    panel.click("#settingsBox summary")
+    _open_settings(panel)
     panel.fill("#sBetween", "0")
     panel.fill("#sStep", "0.3")
     panel.fill("#sCap", "5")
@@ -91,7 +98,7 @@ def test_scroll_button_pauses_and_shortcuts_work(ext):
 
     # Keyboard shortcuts (sent the same way Chrome sends them)
     panel.fill("#tplText", "Hi {first_name}!")
-    panel.click("#settingsBox summary")
+    _open_settings(panel)
     panel.fill("#sBetween", "2")
     panel.dispatch_event("#sBetween", "change")
     panel.fill("#sStep", "0.3")
@@ -176,7 +183,7 @@ def test_inbox_link_opens_my_page_and_blocks_other_pages(ext):
     mine_tab.goto(mine)
     mine_tab.wait_for_function("window.__mock && document.querySelectorAll('.row').length > 5")
     panel.wait_for_selector("#pill.idle", timeout=15_000)
-    panel.click("#settingsBox summary")
+    _open_settings(panel)
     panel.fill("#sCap", "1")
     panel.dispatch_event("#sCap", "change")
     panel.fill("#sStep", "0.3")
@@ -192,7 +199,7 @@ def test_problems_tab_explains_what_happened_and_how_to_fix(ext):
     assert panel.inner_text("#probCount") == "" or panel.is_hidden("#probCount")
     inbox.evaluate("__mock.flags.sendFails = true")
     panel.fill("#tplText", "Hi {first_name}!")
-    panel.click("#settingsBox summary")
+    _open_settings(panel)
     panel.fill("#sBetween", "0")
     panel.dispatch_event("#sBetween", "change")
     panel.fill("#sStep", "0.3")
@@ -221,7 +228,7 @@ def test_saved_messages_buyers_and_hot_lead_label(ext):
     panel.fill("#tplName", "Promo Oct")
     panel.fill("#tplText", "Hi {first_name}! Promo ends Friday")
     assert panel.locator("#tplSelect option").all_inner_texts() == ["Message 1", "Promo Oct"]
-    panel.click("#settingsBox summary")
+    _open_settings(panel)
     for sel, val in (("#sBetween", "0"), ("#sStep", "0.3"), ("#sCap", "3")):
         panel.fill(sel, val)
         panel.dispatch_event(sel, "change")
@@ -264,7 +271,7 @@ def test_saved_messages_buyers_and_hot_lead_label(ext):
 def test_tools_work_while_running_or_paused(ext):
     inbox, panel, _ = ext
     panel.fill("#tplText", "Hi {first_name}!")
-    panel.click("#settingsBox summary")
+    _open_settings(panel)
     for sel, val in (("#sBetween", "20"), ("#sStep", "0.3")):
         panel.fill(sel, val)
         panel.dispatch_event(sel, "change")
@@ -292,8 +299,7 @@ def test_tools_work_while_running_or_paused(ext):
 
 def _quick_run_settings(panel, cap):
     panel.fill("#tplText", "Hi {first_name}!")
-    if not panel.is_visible("#sCap"):
-        panel.click("#settingsBox summary")
+    _open_settings(panel)
     for sel, val in (("#sBetween", "0"), ("#sStep", "0.3"), ("#sCap", str(cap)), ("#fiSecs", "10")):
         panel.fill(sel, val)
         panel.dispatch_event(sel, "change")
@@ -301,7 +307,7 @@ def _quick_run_settings(panel, cap):
 
 def test_scroll_settings_and_when_finished_countdown(ext):
     inbox, panel, sw = ext
-    panel.click("#settingsBox summary")
+    _open_settings(panel)
     panel.check("input[name=whenFinished][value=shutdown]")
     assert panel.input_value("#fiSecs") == "60"
     panel.locator("#finishBox").screenshot(path=str(SHOTS / "option-a-when-finished.png"))
@@ -405,7 +411,7 @@ def test_shutdown_helper_is_called_when_installed(pw):
         log = install_fake_host(profile, ext_id, tools)
         panel = ctx.new_page()
         panel.goto(f"chrome-extension://{ext_id}/sidepanel.html")
-        panel.click("#settingsBox summary")
+        _open_settings(panel)
         panel.click("#fiCheck")
         panel.wait_for_selector("#fiStatus:has-text('installed')", timeout=15_000)
         assert "✓" in panel.inner_text("#fiStatus")
@@ -565,3 +571,32 @@ def test_replies_in_the_middle_of_a_run(ext):
     panel.wait_for_selector("#pill.finished", timeout=120_000)
     ids = [s["id"] for s in inbox.evaluate("__mock.sent")]
     assert ids.count(first) == 2 and len(ids) == 7  # 6 follow-ups (2 + 4 more) + 1 reply
+
+
+def test_settings_fold_into_sections_with_summaries_and_reset(ext):
+    _, panel, _ = ext
+    panel.click("#settingsBox > summary")
+    secs = panel.locator("details.sec")
+    assert secs.count() == 7
+    # First time: only "Start & limits" is open; every section shows its values on one line
+    assert panel.evaluate("[...document.querySelectorAll('details.sec')].map(d => d.open)") == [True] + [False] * 6
+    assert panel.inner_text("#sum_start") == "Top · 300/day · 8 s"
+    assert panel.inner_text("#sum_scroll") == "25 scrolls · 1.5 s · 2 retries"
+    assert panel.inner_text("#sum_who") == "Last message mine · Already messaged: Off"
+    assert panel.inner_text("#sum_helper") == "D:\\FollowUp-History"
+    panel.locator("#settingsBox").screenshot(path=str(SHOTS / "option-a-settings-sections.png"))
+    # Changing a setting updates its summary
+    panel.click("details.sec[data-sec=scroll] > summary")
+    panel.fill("#scCount", "40")
+    panel.dispatch_event("#scCount", "change")
+    assert panel.inner_text("#sum_scroll").startswith("40 scrolls")
+    panel.locator("details.sec[data-sec=scroll]").screenshot(path=str(SHOTS / "option-a-settings-open-section.png"))
+    # Reset this section puts the defaults back (after you confirm)
+    panel.click("details.sec[data-sec=scroll] button.reset")
+    panel.click("#confirmYes")
+    assert panel.input_value("#scCount") == "25" and panel.inner_text("#sum_scroll").startswith("25 scrolls")
+    # Open sections are remembered next time the panel opens
+    panel.wait_for_timeout(300)
+    panel.reload()
+    panel.wait_for_function("document.querySelector('details.sec[data-sec=scroll]').open === true")
+    assert panel.evaluate("document.querySelector('details.sec[data-sec=start]').open")
