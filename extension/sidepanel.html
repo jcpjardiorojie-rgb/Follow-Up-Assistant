@@ -19,6 +19,7 @@
   <button id="tabMain" class="tab on" role="tab" aria-selected="true">Main</button>
   <button id="tabBuyers" class="tab" role="tab" aria-selected="false">Buyers <span id="hotCount" class="count hot" hidden>0</span></button>
   <button id="tabProblems" class="tab" role="tab" aria-selected="false">Problems <span id="probCount" class="count" hidden>0</span></button>
+  <button id="tabLog" class="tab" role="tab" aria-selected="false">Log</button>
 </nav>
 
 <div id="buyersView" hidden>
@@ -62,6 +63,21 @@
   <section class="card">
     <h2>People who replied</h2>
     <ol id="leads" class="leads"></ol>
+  </section>
+</div>
+
+<div id="logView" hidden>
+  <section class="card">
+    <h2>Last runs</h2>
+    <ol id="runs" class="runs"></ol>
+  </section>
+  <section class="card">
+    <div class="loghead"><h2>Log</h2>
+      <select id="dFilter" aria-label="Which part of the log"><option value="run">Last run</option><option value="today">Today</option><option value="all">Last 30 days</option></select></div>
+    <div class="bbtns"><button id="dCopy" class="primary small">Copy for Claude</button><button id="dExport" class="small">Export</button><button id="dClear" class="small">Clear</button></div>
+    <div id="dStatus" class="hint"></div>
+    <ol id="diary" class="diary"></ol>
+    <p class="hint">Everything FollowUp did and why: runs, pauses, problems, the window being hidden, the PC sleeping, how each run ended and what happened after. Kept 30 days, also after a restart.</p>
   </section>
 </div>
 
@@ -141,6 +157,7 @@
         <label>Daily limit<input id="sCap" type="number" min="1" step="1"></label>
         <label>Seconds between chats<input id="sBetween" type="number" min="0" step="1"></label>
       </div>
+      <label class="check"><input id="sAwake" type="checkbox"> Keep the PC awake while it runs <span class="hint">(no sleep, screen stays on; back to normal when done)</span></label>
       <label class="check test"><input id="sTest" type="checkbox"> Test mode: fill the message box, but never press Send or Done</label>
       <button class="small reset" data-reset="start">Reset this section</button>
     </div>
@@ -210,6 +227,12 @@
         <label class="check"><input type="radio" name="whenFinished" value="closeChrome"> Close Chrome</label>
         <label class="check"><input type="radio" name="whenFinished" value="shutdown"> Shut down the computer <span class="hint">(needs the Windows helper)</span></label>
       </div>
+      <div class="onlywhen" id="finishOnBox">
+        <span class="hint">Do this only when the run ended because:</span>
+        <label class="check"><input id="foAlready" type="checkbox"> it reached people who already got this message</label>
+        <label class="check"><input id="foEnd" type="checkbox"> there were no more chats</label>
+        <label class="check"><input id="foDaily" type="checkbox"> the Daily limit was reached</label>
+      </div>
       <div class="grid"><label>Countdown before it happens (sec)<input id="fiSecs" type="number" min="10" step="5"></label></div>
       <p class="hint">Only after a normal finish (daily limit, no more chats, or reached people who already got it),
         never after Stop or a problem pause. A countdown with Cancel shows on the Business Suite page first.</p>
@@ -235,6 +258,7 @@
       <label class="check"><input id="bkOn" type="checkbox"> Save the names that got each message to a folder on this PC</label>
       <label class="hint">Folder<input id="bkFolder" class="field" spellcheck="false"></label>
       <div class="row"><button id="bkNow" class="small">Save now</button><span id="bkStatus" class="hint"></span></div>
+      <label class="check"><input id="bkLog" type="checkbox"> Also save the Log there every day <span class="hint">(log-2026-10-19.txt)</span></label>
       <button class="small reset" data-reset="helper">Reset this section</button>
     </div>
   </details>

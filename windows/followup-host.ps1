@@ -1,7 +1,7 @@
 # FollowUp Copilot helper (Chrome "native messaging" host).
 # Chrome starts this for one request: 4-byte length + JSON in, the same format out.
 # It only understands: ping, shutdown (with a delay), cancel, and saving/reading the
-# name lists (.csv files only) in the folder chosen in the extension's Settings.
+# name lists and logs (.csv and .txt files only) in the folder chosen in the extension's Settings.
 Add-Type -AssemblyName System.Web.Extensions
 $json = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $json.MaxJsonLength = [int]::MaxValue  # name lists can be several MB
@@ -33,7 +33,7 @@ function Send-Message($obj) {
 # Only .csv files with a plain name, inside a full folder path like D:\FollowUp-History.
 function Get-SafePath($folder, $name) {
     if ([string]::IsNullOrWhiteSpace($folder) -or -not [IO.Path]::IsPathRooted($folder)) { throw "Use a full folder path, like D:\FollowUp-History" }
-    if ($name -notmatch '^[^\\/:*?"<>|]{1,120}\.csv$') { throw "Not an allowed file name: $name" }
+    if ($name -notmatch '^[^\\/:*?"<>|]{1,120}\.(csv|txt)$') { throw "Not an allowed file name: $name" }
     if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
     return (Join-Path $folder $name)
 }
@@ -42,7 +42,7 @@ $utf8 = New-Object Text.UTF8Encoding($true)
 $msg = Read-Message
 if ($null -eq $msg) { exit 0 }
 switch ($msg.action) {
-    'ping' { Send-Message @{ ok = $true; version = '1.1' } }
+    'ping' { Send-Message @{ ok = $true; version = '1.2' } }
     'saveFile' {
         try {
             $path = Get-SafePath $msg.folder $msg.name

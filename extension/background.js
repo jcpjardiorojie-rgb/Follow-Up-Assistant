@@ -87,3 +87,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   (msg.type === "fu-notify" ? notifyAll(msg) : fileAction(msg)).then(reply, (e) => reply({ ok: false, error: String(e && e.message || e) }));
   return true;
 });
+
+// F1: keep the PC awake (no sleep, screen on) while a run or a scroll is going.
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (!msg || msg.type !== "fu-awake") return;
+  try { if (msg.on) chrome.power.requestKeepAwake("display"); else chrome.power.releaseKeepAwake(); reply({ ok: true }); }
+  catch (e) { reply({ ok: false, error: String(e && e.message || e) }); }
+});

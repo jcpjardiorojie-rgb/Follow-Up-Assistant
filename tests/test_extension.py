@@ -365,7 +365,7 @@ with open(LOG, "a") as f:
 a = msg.get("action")
 out = {"ok": True}
 if a == "ping":
-    out["version"] = "1.1"
+    out["version"] = "1.2"
 elif a in ("saveFile", "appendFile", "readFile"):
     os.makedirs(msg["folder"], exist_ok=True)
     path = os.path.join(msg["folder"], msg["name"])
@@ -600,3 +600,35 @@ def test_settings_fold_into_sections_with_summaries_and_reset(ext):
     panel.reload()
     panel.wait_for_function("document.querySelector('details.sec[data-sec=scroll]').open === true")
     assert panel.evaluate("document.querySelector('details.sec[data-sec=start]').open")
+
+
+def test_log_tab_last_runs_keep_awake_and_which_endings_shut_down(ext):
+    inbox, panel, sw = ext
+    sw.evaluate("""() => { self.__awake = [];
+      chrome.power.requestKeepAwake = (l) => self.__awake.push('on:' + l);
+      chrome.power.releaseKeepAwake = () => self.__awake.push('off'); }""")
+    _quick_run_settings(panel, 3)
+    # Defaults: keep awake on; "When finished" only for already-messaged and no-more-chats endings
+    assert panel.is_checked("#sAwake") and panel.is_checked("#foAlready") and panel.is_checked("#foEnd") and not panel.is_checked("#foDaily")
+    panel.check("input[name=whenFinished][value=closeTab]")
+    panel.locator("#finishOnBox").screenshot(path=str(SHOTS / "option-a-finish-only-when.png"))
+    panel.click("#start")
+    panel.wait_for_selector("#pill.finished", timeout=120_000)
+    # Ended by the Daily limit, which isn't allowed to close the tab: no countdown
+    inbox.wait_for_timeout(1500)
+    assert inbox.locator("#fu-finish").count() == 0
+    assert sw.evaluate("self.__awake")[0] == "on:display" and sw.evaluate("self.__awake")[-1] == "off"
+    panel.click("#tabLog")
+    panel.wait_for_selector("#diary li .k.FINISH", timeout=10_000)
+    log = panel.inner_text("#diary")
+    assert "Started · Message" in log and "Daily limit 3" in log
+    assert "Ended: Daily limit of 3 reached · 3 sent" in log
+    assert "Not doing “Close the tab”" in log and "Keeping the PC awake" in log
+    runs = panel.inner_text("#runs")
+    assert "3 sent" in runs and "Ended: Daily limit of 3 reached" in runs and "Then: Nothing" in runs
+    panel.locator("#logView").screenshot(path=str(SHOTS / "option-a-log-tab.png"))
+    # Copy for Claude puts the last run on the clipboard
+    panel.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    panel.click("#dCopy")
+    panel.wait_for_selector("#dStatus:has-text('Copied')")
+    assert "Ended: Daily limit of 3 reached" in panel.evaluate("navigator.clipboard.readText()")

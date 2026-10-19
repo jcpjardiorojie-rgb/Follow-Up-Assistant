@@ -58,6 +58,11 @@
     buttonUsesScrollSettings: true, // S5: the "Scroll inbox to the bottom" button follows S1 too
     // When the run finishes normally (not after Stop or a problem pause)
     whenFinished: "nothing", // "nothing", "closeTab", "closeChrome" or "shutdown"
+    finishOnAlready: true, // F3: which endings do "When finished": reached people who already got it,
+    finishOnEnd: true, //     no more chats,
+    finishOnDaily: false, //  the Daily limit
+    keepAwake: true, // F1: no sleep, screen on while a run or scroll is going
+    diaryToFile: true, // also write the Log to the PC folder (log-YYYY-MM-DD.txt)
     finishCountdownSec: 60,
     // "Already messaged" (Settings): never send the same message twice, and stop when the run reaches
     // people who already got it (chats you message jump to the top, so that's where the last run started).

@@ -184,3 +184,19 @@ h1 .by { font-size: 12px; font-weight: 500; color: var(--muted); white-space: no
 .sec > summary { flex-wrap: wrap; row-gap: 2px; }
 .sec > summary .sum { white-space: normal; text-align: left; margin-left: auto; }
 [hidden] { display: none !important; }
+
+/* Log tab */
+.onlywhen { display: grid; gap: 4px; border: 1px dashed var(--line); border-radius: 8px; padding: 7px 9px; }
+.runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.runs li { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 12.5px; display: grid; gap: 2px; }
+.runs li b { font-size: 13px; }
+.runs .ended { color: var(--muted); }
+.diary { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow: auto; display: grid; gap: 1px; background: var(--line); border-radius: 7px; }
+.diary li { background: var(--surface); padding: 5px 8px; display: grid; grid-template-columns: 58px 70px 1fr; gap: 6px; font-size: 12px; align-items: baseline; }
+.diary .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+.diary .k { font-weight: 700; font-size: 10.5px; border-radius: 4px; padding: 1px 4px; justify-self: start; background: var(--sunk, #e8ece9); color: var(--muted); }
+.diary .k.RUN, .diary .k.FINISH { background: var(--accent-soft); color: var(--accent); }
+.diary .k.PROBLEM, .diary .k.STOP { background: var(--bad-soft, #f6dcdc); color: var(--bad, #a83636); }
+.diary .k.PAUSE, .diary .k.SCREEN, .diary .k.WAIT { background: var(--warn-soft, #f7e9cf); color: var(--warn, #9a6212); }
+.diary .k.SLEEP\? { background: var(--warn-soft, #f7e9cf); color: var(--warn, #9a6212); }
+.diary .m { min-width: 0; overflow-wrap: anywhere; }

@@ -16,6 +16,7 @@ const DEF = {
   dupCheck: false, stopBy: "both", stopAfter: 3, backupOn: true, backupFolder: FollowUpEngine.DEFAULTS.backupFolder,
   notifyPC: true, notifyPhone: false, ntfyTopic: "", notifyOnPause: true, ntfyServer: "https://ntfy.sh",
   replyMode: "ask", autoCheckReplies: false, autoCheckMinutes: 10,
+  keepAwake: true, finishOnAlready: true, finishOnEnd: true, finishOnDaily: false, diaryToFile: true,
 };
 const BAD = new Set(["FAILED", "REVIEW", "UNKNOWN"]);
 let settings = {}, template = {}, templates = [], contacts = {}, history = {}, replies = {}, tabId = null, state = "idle", scrollState = "idle";
@@ -75,6 +76,11 @@ function fillForm() {
   $("scButton").checked = settings.buttonUsesScrollSettings;
   for (const r of document.querySelectorAll("input[name=whenFinished]")) r.checked = r.value === settings.whenFinished;
   $("fiSecs").value = settings.finishCountdownSec;
+  $("sAwake").checked = settings.keepAwake;
+  $("foAlready").checked = settings.finishOnAlready;
+  $("foEnd").checked = settings.finishOnEnd;
+  $("foDaily").checked = settings.finishOnDaily;
+  $("bkLog").checked = settings.diaryToFile;
   $("dCheck").checked = settings.dupCheck;
   for (const r of document.querySelectorAll("input[name=stopBy]")) r.checked = r.value === settings.stopBy;
   $("dAfter").value = settings.stopAfter;
@@ -121,6 +127,11 @@ function readSettings() {
   const wf = document.querySelector("input[name=whenFinished]:checked");
   settings.whenFinished = wf ? wf.value : "nothing";
   settings.finishCountdownSec = Math.max(10, Math.round(+$("fiSecs").value || 60));
+  settings.keepAwake = $("sAwake").checked;
+  settings.finishOnAlready = $("foAlready").checked;
+  settings.finishOnEnd = $("foEnd").checked;
+  settings.finishOnDaily = $("foDaily").checked;
+  settings.diaryToFile = $("bkLog").checked;
   settings.dupCheck = $("dCheck").checked;
   const sb = document.querySelector("input[name=stopBy]:checked");
   settings.stopBy = sb ? sb.value : "both";
@@ -182,7 +193,8 @@ $("imgFile").addEventListener("change", () => {
 $("imgRemove").addEventListener("click", () => { template.imageDataUrl = ""; template.imageName = ""; saveTemplate(); showImage(); });
 for (const id of ["sBetween", "sStep", "sCap", "sOrder", "sLastMine", "sSentDone", "sImgReq", "sTest", "aBlocked", "aNames", "aStop",
   "aHot", "aWarm", "aCold", "bAuto", "bLabelName", "scHow", "scCount", "scChats", "scWait", "scRetry", "scMax", "scButton", "fiSecs",
-  "dCheck", "dAfter", "bkOn", "bkFolder", "nPC", "nPhone", "nTopic", "nPause", "rAuto", "rMins"]) {
+  "dCheck", "dAfter", "bkOn", "bkFolder", "nPC", "nPhone", "nTopic", "nPause", "rAuto", "rMins",
+  "sAwake", "foAlready", "foEnd", "foDaily", "bkLog"]) {
   $(id).addEventListener("change", readSettings);
 }
 $("aReset").addEventListener("click", () => {
@@ -290,11 +302,12 @@ $("fiCheck").addEventListener("click", async () => {
   el.className = "hint"; el.textContent = "Checking…";
   try {
     const r = await chrome.runtime.sendNativeMessage("com.rojie.followup_copilot", { action: "ping" });
-    const fresh = r && r.ok && parseFloat(r.version || "1.0") >= 1.1;
+    const v = parseFloat((r && r.version) || "1.0");
+    const fresh = r && r.ok && v >= 1.2;
     el.className = fresh ? "good" : "bad";
     el.textContent = !(r && r.ok) ? "✗ The helper answered with an error"
-      : fresh ? "✓ Windows helper installed (shutdown and saving names)"
-      : "✗ Old helper: shutdown works, saving names doesn't. Double-click windows\\Setup-FollowUp.bat again.";
+      : fresh ? "✓ Windows helper installed (shutdown, saving names and the Log)"
+      : `✗ Old helper (${r.version || "1.0"}): ${v >= 1.1 ? "saving the Log to your PC" : "saving names and the Log"} won't work. Double-click windows\\Setup-FollowUp.bat again.`;
   } catch (_) {
     el.className = "bad";
     el.textContent = "✗ Not installed. Double-click windows\\Setup-FollowUp.bat, then click ↻ on the extension.";
@@ -316,7 +329,7 @@ $("finishNow").addEventListener("click", () => send("finishNow"));
 
 // ---------- tabs and the Problems list ----------
 function showTab(which) {
-  for (const [tab, view, name] of [["tabMain", "mainView", "main"], ["tabBuyers", "buyersView", "buyers"], ["tabProblems", "problemsView", "problems"]]) {
+  for (const [tab, view, name] of [["tabMain", "mainView", "main"], ["tabBuyers", "buyersView", "buyers"], ["tabProblems", "problemsView", "problems"], ["tabLog", "logView", "log"]]) {
     $(view).hidden = which !== name;
     $(tab).classList.toggle("on", which === name);
     $(tab).setAttribute("aria-selected", String(which === name));
@@ -325,6 +338,7 @@ function showTab(which) {
 $("tabMain").addEventListener("click", () => showTab("main"));
 $("tabBuyers").addEventListener("click", () => showTab("buyers"));
 $("tabProblems").addEventListener("click", () => showTab("problems"));
+$("tabLog").addEventListener("click", () => { showTab("log"); showDiary(); });
 $("seeProblems").addEventListener("click", () => showTab("problems"));
 
 function problemItem(p) {
@@ -509,16 +523,17 @@ function showSummaries() {
   put("who", `${s.onlyIfLastFromMe ? "Last message mine" : "Everyone"} · Already messaged: ${s.dupCheck ? `On (${STOP_NAME[s.stopBy]}, ${s.stopAfter})` : "Off"}`);
   put("send", `Wait ${(s.stepDelayMs / 1000).toFixed(1)} s · image ${s.imageRequired ? "required" : "optional"}` + (s.moveSentToDone ? " · sent → Done" : ""));
   const tell = [s.notifyPC && "PC", s.notifyPhone && "phone"].filter(Boolean).join(" + ") || "no notifications";
-  put("finish", `${FINISH_NAME[s.whenFinished] || s.whenFinished}${s.whenFinished !== "nothing" ? ` · ${s.finishCountdownSec} s` : ""} · ${tell}`);
+  const when = [s.finishOnAlready && "already sent", s.finishOnEnd && "no more chats", s.finishOnDaily && "daily limit"].filter(Boolean).join("/") || "never";
+  put("finish", `${FINISH_NAME[s.whenFinished] || s.whenFinished}${s.whenFinished !== "nothing" ? ` (when: ${when}) · ${s.finishCountdownSec} s` : ""} · ${tell}`);
   put("helper", s.backupOn ? s.backupFolder : "Saving names: off");
 }
 const SECTION_KEYS = {
-  start: ["order", "dailyCap", "betweenChatsSec", "testMode"],
+  start: ["order", "dailyCap", "betweenChatsSec", "testMode", "keepAwake"],
   scroll: ["scrollHow", "scrollCount", "scrollChats", "scrollWaitSec", "unstickRetries", "loadAllMaxMinutes", "buttonUsesScrollSettings"],
   who: ["onlyIfLastFromMe", "dupCheck", "stopBy", "stopAfter"],
   send: ["stepDelayMs", "imageRequired", "moveSentToDone"],
-  finish: ["whenFinished", "finishCountdownSec", "notifyPC", "notifyPhone", "notifyOnPause"], // your ntfy topic is kept
-  helper: ["backupOn", "backupFolder"],
+  finish: ["whenFinished", "finishCountdownSec", "notifyPC", "notifyPhone", "notifyOnPause", "finishOnAlready", "finishOnEnd", "finishOnDaily"], // your ntfy topic is kept
+  helper: ["backupOn", "backupFolder", "diaryToFile"],
 };
 for (const b of document.querySelectorAll("button.reset[data-reset]")) {
   b.addEventListener("click", () => {
@@ -654,6 +669,93 @@ $("rSendAll").addEventListener("click", async () => {
   buyersBusy(r.ok, r.message);
 });
 
+
+// ---------- Log tab: last runs and the run diary ----------
+let diaryCache = [], runsCache = [];
+const hhmm = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function runLine(r) {
+  const start = new Date(r.start);
+  const mins = r.end ? Math.max(1, Math.round((Date.parse(r.end) - start) / 60000)) : null;
+  const when = `${start.toLocaleDateString([], { month: "short", day: "numeric" })} · ${hhmm(r.start)} → ${r.end ? hhmm(r.end) : "still running"}` + (mins ? ` (${mins} min)` : "");
+  return { when, what: `${r.sent || 0} sent · ${r.excluded || 0} to Done · ${r.skipped || 0} skipped · ${r.failed || 0} problems · “${r.message || ""}”`,
+    ended: r.end ? `Ended: ${r.ended || "?"} · Then: ${r.after || "—"}` : "" };
+}
+function showRuns() {
+  const ol = $("runs");
+  const list = runsCache.slice(-5).reverse();
+  if (!list.length) { const li = document.createElement("li"); li.textContent = "No runs yet. Each run you start shows here, with why it ended."; ol.replaceChildren(li); return; }
+  ol.replaceChildren(...list.map((r) => {
+    const x = runLine(r), li = document.createElement("li");
+    const b = document.createElement("b"); b.textContent = x.when;
+    const w = document.createElement("span"); w.textContent = x.what;
+    const e = document.createElement("span"); e.className = "ended"; e.textContent = x.ended;
+    li.append(b, w, e);
+    return li;
+  }));
+}
+function diaryPick() {
+  const f = $("dFilter").value;
+  if (f === "today") { const d = new Date().toLocaleDateString("en-CA"); return diaryCache.filter((e) => new Date(e.t).toLocaleDateString("en-CA") === d); }
+  if (f === "run") {
+    const last = [...diaryCache].reverse().find((e) => e.k === "RUN");
+    if (!last) return diaryCache.slice(-200);
+    const i = diaryCache.lastIndexOf(last);
+    return diaryCache.slice(i);
+  }
+  return diaryCache;
+}
+function diaryItem(e) {
+  const li = document.createElement("li");
+  const t = document.createElement("span"); t.className = "t"; t.textContent = hhmm(e.t); t.title = new Date(e.t).toLocaleString();
+  const k = document.createElement("span"); k.className = "k " + e.k; k.textContent = e.k;
+  const m = document.createElement("span"); m.className = "m"; m.textContent = e.m;
+  li.append(t, k, m);
+  return li;
+}
+function showDiary() {
+  const items = diaryPick().slice(-500).reverse();
+  if (!items.length) { const li = document.createElement("li"); li.style.display = "block"; li.textContent = "Nothing logged yet."; $("diary").replaceChildren(li); }
+  else $("diary").replaceChildren(...items.map(diaryItem));
+  showRuns();
+}
+async function loadDiary() {
+  await send("flushDiary").catch(() => {});
+  const d = await chrome.storage.local.get(["diary", "runs"]);
+  diaryCache = d.diary || []; runsCache = d.runs || [];
+  showDiary();
+}
+const diaryText = (items) => items.map((e) => `${new Date(e.t).toLocaleString()}  ${e.k.padEnd(8)} ${e.m}`).join("\n");
+$("dFilter").addEventListener("change", showDiary);
+$("dCopy").addEventListener("click", async () => {
+  await loadDiary();
+  const items = diaryPick();
+  const head = `FollowUp Copilot ${chrome.runtime.getManifest().version} · log (${$("dFilter").selectedOptions[0].textContent})\n` +
+    runsCache.slice(-3).map((r) => { const x = runLine(r); return `RUN ${x.when} · ${x.what} · ${x.ended}`; }).join("\n") + "\n\n";
+  const text = head + diaryText(items);
+  try { await navigator.clipboard.writeText(text); $("dStatus").textContent = `Copied ${items.length} lines. Paste them in your message to Claude.`; }
+  catch (_) { $("dStatus").textContent = "Couldn't copy. Use Export instead."; }
+});
+$("dExport").addEventListener("click", async () => {
+  await loadDiary();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([diaryText(diaryCache)], { type: "text/plain" }));
+  a.download = `followup-log-${new Date().toLocaleDateString("en-CA")}.txt`;
+  a.click();
+});
+$("dClear").addEventListener("click", () => ask("Clear the Log and the Last runs list?", async () => {
+  await chrome.storage.local.set({ diary: [], runs: [] }); diaryCache = []; runsCache = []; showDiary();
+}));
+chrome.storage.onChanged.addListener((ch) => {
+  if (ch.diary) { diaryCache = ch.diary.newValue || []; if (!$("logView").hidden) showDiary(); }
+  if (ch.runs) { runsCache = ch.runs.newValue || []; if (!$("logView").hidden) showRuns(); }
+});
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === "fu-status" && msg.diary) {
+    diaryCache.push(msg.diary);
+    if (!$("logView").hidden) showDiary();
+  }
+});
+
 // ---------- your inbox link ----------
 function showInboxMsg(text, kind) {
   const el = $("inboxMsg");
@@ -778,6 +880,7 @@ $("newCampaign").addEventListener("click", () => ask("Start a new campaign? The 
 // ---------- start up ----------
 (async () => {
   await loadAll();
+  loadDiary();
   setState("idle");
   showKeys();
   showBuyers();
