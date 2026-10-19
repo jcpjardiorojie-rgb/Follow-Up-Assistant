@@ -467,3 +467,11 @@ def test_old_broadcast_with_the_same_words_still_gets_the_follow_up(page):
     res = run(page, template="*GOOD NEWS! There's more to explore with our new package", order="bottom", dailyCap=5)
     assert [e["status"] for e in res["log"]][:2] == ["SENT", "SENT"]  # starts at the bottom, no skipping up
     assert not already(res["log"]) and len(mock(page)["sent"]) == 5
+
+
+def test_switched_off_works_like_before_1_7(page):
+    first = run(page, dailyCap=3)
+    names = [e["name"] for e in first["log"] if e["status"] == "SENT"]
+    page.evaluate("window.__t = null")
+    res = run(page, dupCheck=False, stopBy="name", names=names, dailyCap=3)
+    assert not already(res["log"]) and res["states"][-1]["reason"].startswith("Daily limit")

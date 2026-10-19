@@ -681,7 +681,7 @@
     // Already messaged? "Stop by name" decides from the list, without opening the chat.
     const thisRun = !!run && run.sentThisRun.has(row.name);
     const nameHit = !replying && !excludedName && hooks.nameSent ? !!(await hooks.nameSent(row.name)) : false;
-    if (!replying && !excludedName && cfg.stopBy === "name" && nameHit) {
+    if (!replying && !excludedName && cfg.dupCheck !== false && cfg.stopBy === "name" && nameHit) {
       return thisRun ? out("SKIPPED", "Messaged earlier in this run") : out("ALREADY", "Already got this message (name)", { counted: true });
     }
 
@@ -915,7 +915,7 @@
           if (res.status === "SENT" || res.status === "UNKNOWN" || res.status === "TEST") { this.sentThisRun.add(row.name); already = 0; }
           if (res.status === "ALREADY" && res.counted) already++;
           const stopAt = Math.max(1, Math.round(+cfg.stopAfter || 3));
-          if (cfg.stopBy !== "off" && already >= stopAt) {
+          if (cfg.dupCheck !== false && cfg.stopBy !== "off" && already >= stopAt) {
             this.setState("finished", `Stopped: ${already} chats in a row already had this message, so this run reached the people from your last run.`);
             return;
           }

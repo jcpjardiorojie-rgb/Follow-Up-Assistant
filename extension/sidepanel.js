@@ -270,7 +270,13 @@ chrome.storage.onChanged.addListener((ch) => {
 });
 
 // ---------- Scrolling and "When the run is finished" ----------
+function showDupFields() {
+  const on = $("dCheck").checked;
+  $("dOptions").hidden = !on;
+  $("dOffNote").hidden = on;
+}
 function showScrollFields() {
+  showDupFields();
   const how = $("scHow").value;
   $("scCount").closest("label").hidden = how !== "count";
   $("scChats").closest("label").hidden = how !== "chats";
