@@ -530,7 +530,7 @@ def test_auto_replies_ask_first_then_automatic(ext):
 
     # Skip the warm one, send the hot one
     panel.locator("#pending li.warm button:has-text('Skip')").click()
-    panel.wait_for_function("document.getElementById('pCount').textContent === '1'")
+    panel.wait_for_selector("#pCount:text-is('1')")
     panel.click("#rSendAll")
     inbox.wait_for_function("__mock.sent.length === 4", timeout=60_000)
     last = inbox.evaluate("__mock.sent[3]")
@@ -584,7 +584,7 @@ def test_settings_fold_into_sections_with_summaries_and_reset(ext):
     # First time: only "Start & limits" is open; every section shows its values on one line
     assert panel.evaluate("[...document.querySelectorAll('details.sec')].map(d => d.open)") == [True] + [False] * 6
     assert panel.inner_text("#sum_start") == "Top · 300/day · 8 s"
-    assert panel.inner_text("#sum_scroll") == "25 scrolls · 1.5 s · 2 retries"
+    assert panel.inner_text("#sum_scroll") == "25 scrolls · 1.5 s · 2 retries · waits 0 s at the bottom"
     assert panel.inner_text("#sum_who") == "Last message mine · Already messaged: Off"
     assert panel.inner_text("#sum_helper") == "D:\\FollowUp-History"
     panel.locator("#settingsBox").screenshot(path=str(SHOTS / "option-a-settings-sections.png"))

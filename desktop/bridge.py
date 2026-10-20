@@ -24,6 +24,7 @@ INBOX_URL = "https://business.facebook.com/latest/inbox/all/"
 ENGINE_KEYS = [
     "fallbackName", "blockedTexts", "excludeNames", "stopTexts", "order", "onlyIfLastFromMe",
     "moveSentToDone", "testMode", "stepDelayMs", "betweenChatsSec", "dailyCap", "imageRequired",
+    "bottomWaitSec",
 ]
 def asset_id(url):
     """The Facebook Page id in a Business Suite link (asset_id=…), or None."""
@@ -69,6 +70,7 @@ DEFAULT_SETTINGS = {
     "stepDelayMs": 1200,
     "betweenChatsSec": 8,
     "dailyCap": 300,
+    "bottomWaitSec": 60,  # before deciding it's the bottom of the inbox, keep trying this long
     "hotkeys": {"toggle_run": "Ctrl+Shift+1", "stop": "Ctrl+Shift+2", "toggle_scroll": "Ctrl+Shift+3", "scroll_latest": "Ctrl+Shift+4"},
 }
 COUNTER = {"SENT": "sent", "EXCLUDED": "excluded", "SKIPPED": "skipped", "FAILED": "failed",

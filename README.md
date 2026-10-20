@@ -63,6 +63,19 @@ Safety rules built into both versions:
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
    by mistake. The badge at the top says **Ready** when it's connected.
 
+## New in 1.8.1
+
+* **New "Start from" choice (Settings → 1): "Bottom: scroll down until nothing more loads, then send going up".**
+  FollowUp first scrolls the inbox all the way down, ignoring the "How far" limit, and then starts sending
+  from the very bottom chat going up. The sending itself is exactly the same as before.
+* **Doesn't give up on scrolling too early (Settings → 2):** "Before deciding it's the bottom, keep trying (sec)",
+  60 by default. When chats stop loading, FollowUp nudges the list up a little and back down every 10 seconds
+  until this time runs out. Set 0 for the old behavior.
+* The old **"Bottom"** choice still stops after the number of scrolls set in "How far".
+
+![Start from: Bottom (all the way)](docs/screenshots/option-a-start-bottom-all.png)
+![Keep trying at the bottom](docs/screenshots/option-a-scroll-patience.png)
+
 ## New in 1.8.0
 
 * **Log tab (run diary).** Everything FollowUp does, with times: each run's start (with the settings used),

@@ -168,7 +168,7 @@ def test_bottom_order_scrolls_down_first_then_goes_up(page):
     # Only 12 of 22 chats were loaded at the start; it scrolled to the very bottom first.
     reasons = [s.get("reason", "") for s in res["states"]]
     assert any("Scrolling to the bottom" in r for r in reasons)
-    assert "Reached the bottom of the inbox. Sending from the bottom up." in reasons
+    assert any(r.startswith("Reached the bottom of the inbox (") and r.endswith("Sending from the bottom up.") for r in reasons)
     # Then it worked upward: the last chat first; "Julie Lucas" (can't message) moved to Done on the way.
     assert [s["name"] for s in m["sent"]] == ["Evah August Iamu", "Joshua Gerua", "Alois Mabep"]
     names = {i: n for i, n, _ in m["names"]}
@@ -357,12 +357,12 @@ def test_scroll_settings_count_chats_retries_and_button(page):
     assert r["reachedGoal"] and r["chats"] >= 15 and page.evaluate("__mock.loaded") == 18
     page.reload(); page.evaluate(__import__("conftest").ENGINE_JS)
     # S5 off: the button ignores the scroll count and goes all the way
-    r = page.evaluate(tool, {"scrollHow": "count", "scrollCount": 1, "scrollWaitSec": 0, "buttonUsesScrollSettings": False})
+    r = page.evaluate(tool, {"scrollHow": "count", "scrollCount": 1, "scrollWaitSec": 0, "buttonUsesScrollSettings": False, "bottomWaitSec": 0})
     assert r["reachedEnd"] and r["rows"] == 22
     page.reload(); page.evaluate(__import__("conftest").ENGINE_JS)
     # S3 with no unstick retries, a list that gets stuck looks like the bottom
     page.evaluate("__mock.flags.sticky = true")
-    r = page.evaluate(tool, {"scrollHow": "all", "scrollWaitSec": 0, "unstickRetries": 0})
+    r = page.evaluate(tool, {"scrollHow": "all", "scrollWaitSec": 0, "unstickRetries": 0, "bottomWaitSec": 0})
     assert r["reachedEnd"] and page.evaluate("__mock.loaded") < 22
     page.reload(); page.evaluate(__import__("conftest").ENGINE_JS)
     # S2 wait between scrolls slows each scroll down

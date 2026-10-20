@@ -18,7 +18,7 @@ def app(tmp_path):
     events = []
     store = Store(tmp_path)
     store.settings.update({"template": "Hi {first_name}!\nPromo ends Friday.", "image_path": str(TINY_PNG),
-                           "betweenChatsSec": 0, "stepDelayMs": 300, "dailyCap": 4})
+                           "betweenChatsSec": 0, "stepDelayMs": 300, "dailyCap": 4, "bottomWaitSec": 0})
     c = Controller(store, lambda kind, data: events.append((kind, data)))
     c.open_browser(url=INBOX_URL, channel=None, headless=True,
                    viewport={"width": 1400, "height": 900}, setup=serve).result(60)

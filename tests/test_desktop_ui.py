@@ -16,7 +16,7 @@ def test_window_start_button_runs_campaign(tmp_path):
     from bridge import Store
 
     store = Store(tmp_path)
-    store.settings.update({"image_path": str(TINY_PNG), "stepDelayMs": 300})
+    store.settings.update({"image_path": str(TINY_PNG), "stepDelayMs": 300, "bottomWaitSec": 0})
     root = tk.Tk()
     app = fd.App(root, store)
     app.ctl.open_browser(url=INBOX_URL, channel=None, headless=True,
@@ -50,7 +50,7 @@ def test_window_shortcuts_toggle_run_and_scroll(tmp_path):
     from bridge import Store
 
     store = Store(tmp_path)
-    store.settings.update({"stepDelayMs": 300, "betweenChatsSec": 2, "template": "Hi {first_name}!"})
+    store.settings.update({"stepDelayMs": 300, "betweenChatsSec": 2, "template": "Hi {first_name}!", "bottomWaitSec": 0})
     root = tk.Tk()
     app = fd.App(root, store)
 
