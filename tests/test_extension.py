@@ -33,6 +33,8 @@ def ext(pw):
         panel.goto(f"chrome-extension://{ext_id}/sidepanel.html")
         panel.wait_for_selector("#where:has-text('Connected')")
         panel._fu = {"profile": profile, "ext_id": ext_id}
+        # quick tests: don't wait a minute at the bottom of the inbox
+        panel.evaluate("() => { const el = document.getElementById('scPatience'); el.value = '0'; el.dispatchEvent(new Event('change')); }")
         yield inbox, panel, sw
         ctx.close()
 

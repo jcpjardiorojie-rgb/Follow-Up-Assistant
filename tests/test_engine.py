@@ -1,6 +1,8 @@
 """Tests for the shared engine, run the way Option A runs it (in-page events, no Playwright input)."""
 import base64
 
+from conftest import ENGINE_JS
+
 from conftest import TINY_PNG
 
 TEMPLATE = "Hi {first_name}! Just following up po 😊\nPromo ends Friday."
@@ -24,7 +26,7 @@ START = """async (cfg) => {
   return { state, states: t.states, log: t.log, sent: t.sent };
 }"""
 
-FAST = {"stepDelayMs": 150, "betweenChatsSec": 0, "pageTimeoutMs": 2500, "stallRetries": 0}
+FAST = {"stepDelayMs": 150, "betweenChatsSec": 0, "pageTimeoutMs": 2500, "stallRetries": 0, "bottomWaitSec": 0}
 
 
 def run(page, **cfg):
@@ -492,7 +494,7 @@ def test_narrow_window_scrolls_the_inbox_not_the_chat(browser):
     d = pg.evaluate("FollowUpEngine.tools.diagnose({})")
     assert d["rows"] == 12 and d["firstRows"][0]["name"] == "Lista Maison"
     msgs_before = pg.evaluate("document.getElementById('msgs').scrollTop")
-    r = pg.evaluate("FollowUpEngine.tools.loadWholeInbox({ scrollWaitSec: 0.2, unstickRetries: 0, buttonUsesScrollSettings: false })")
+    r = pg.evaluate("FollowUpEngine.tools.loadWholeInbox({ scrollWaitSec: 0.2, unstickRetries: 0, buttonUsesScrollSettings: false, bottomWaitSec: 0 })")
     assert r["reachedEnd"] and r["chats"] >= 21
     assert pg.evaluate("document.getElementById('list').scrollTop") > 0
     assert pg.evaluate("document.getElementById('msgs').scrollTop") == msgs_before
@@ -527,3 +529,26 @@ def test_waits_and_retries_before_deciding_the_inbox_ended(page):
     codes = [s.get("code") for s in res["states"]]
     assert codes.count("stall") == 2  # tried twice more before finishing
     assert res["states"][-1]["code"] == "end" and res["states"][-1]["reason"] == "No more conversations in this view"
+
+
+def test_bottom_all_scrolls_until_nothing_loads_then_sends_from_the_very_bottom(page):
+    page.goto("https://business.facebook.com/latest/inbox/all/?extra=30")
+    page.wait_for_function("window.__mock && document.querySelectorAll('.row').length > 5")
+    page.evaluate(ENGINE_JS)
+    page.evaluate("FollowUpEngine.DEFAULTS.bottomWaitSec = 0")
+    # "Number of scrolls: 1" is ignored by this option: it scrolls until nothing more loads.
+    res = run(page, order="bottomAll", scrollHow="count", scrollCount=1, scrollWaitSec=0, dailyCap=2)
+    assert [s["name"] for s in mock(page)["sent"]] == ["Lead Number 30", "Lead Number 29"]
+    assert any("Reached the bottom of the inbox" in s.get("reason", "") for s in res["states"])
+
+
+def test_waits_through_a_pause_in_loading_before_calling_it_the_bottom(page):
+    page.goto("https://business.facebook.com/latest/inbox/all/?extra=30")
+    page.wait_for_function("window.__mock && document.querySelectorAll('.row').length > 5")
+    page.evaluate(ENGINE_JS)
+    # Loading pauses for 6 seconds after 24 chats, like a slow Business Suite.
+    page.evaluate("__mock.flags.pauseAfter = 24; __mock.flags.pauseMs = 6000")
+    quick = page.evaluate("FollowUpEngine.tools.loadWholeInbox({ scrollWaitSec: 0.2, unstickRetries: 0, buttonUsesScrollSettings: false, bottomWaitSec: 0 }, null, 60)")
+    assert quick["reachedEnd"] and quick["chats"] < 40  # without waiting it stops midway
+    patient = page.evaluate("FollowUpEngine.tools.loadWholeInbox({ scrollWaitSec: 0.2, unstickRetries: 0, buttonUsesScrollSettings: false, bottomWaitSec: 20 }, null, 120)")
+    assert patient["reachedEnd"] and patient["chats"] >= 50  # all 52 chats (two "Facebook user" rows count once)

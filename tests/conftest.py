@@ -41,6 +41,7 @@ def page(browser):
     serve_mock(pg)
     pg.goto(INBOX_URL)
     pg.evaluate(ENGINE_JS)
+    pg.evaluate("FollowUpEngine.DEFAULTS.bottomWaitSec = 0")  # quick tests: don't wait a minute at the bottom
     yield pg
     ctx.close()
 

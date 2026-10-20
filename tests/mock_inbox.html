@@ -135,6 +135,9 @@
       if (l.scrollTop < l.scrollHeight - l.clientHeight - 200) mock.stuck = false;
       return;
     }
+    // flags.pauseAfter / pauseMs: after this many chats, loading pauses for a while (like a slow Business Suite)
+    if (mock.flags.pauseAfter && mock.loaded >= mock.flags.pauseAfter && !mock.pauseUntil) mock.pauseUntil = Date.now() + (mock.flags.pauseMs || 8000);
+    if (mock.pauseUntil && Date.now() < mock.pauseUntil) return;
     if (l.scrollTop + l.clientHeight >= l.scrollHeight - 5 && mock.loaded < convs.length && !mock.loading) {
       mock.loading = true;
       setTimeout(() => { mock.loaded += 6; mock.loading = false; renderList(); if (mock.flags.sticky) mock.stuck = true; }, 400);

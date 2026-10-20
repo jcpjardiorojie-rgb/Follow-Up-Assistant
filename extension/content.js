@@ -203,7 +203,7 @@
       E.start(cfg, hooks(new Set(data.campaign.doneIds)));
       const st = data.settings;
       run = { id: Date.now(), start: new Date().toISOString(), message: t.name, sent: 0 };
-      const far = st.order === "bottom" ? (st.scrollHow === "all" ? "Bottom (all the way)" : st.scrollHow === "chats" ? `Bottom (about ${st.scrollChats} chats)` : `Bottom (${st.scrollCount} scrolls)`) : st.order === "screen" ? "Lowest chat on screen" : "Top";
+      const far = st.order === "bottomAll" ? "Bottom (scroll until nothing more loads)" : st.order === "bottom" ? (st.scrollHow === "all" ? "Bottom (all the way)" : st.scrollHow === "chats" ? `Bottom (about ${st.scrollChats} chats)` : `Bottom (${st.scrollCount} scrolls)`) : st.order === "screen" ? "Lowest chat on screen" : "Top";
       diary("RUN", `Started · Message “${t.name}” · Start from ${far} · Daily limit ${st.dailyCap} (${data.stats.sent} sent today already) · ` +
         `Already messaged ${st.dupCheck ? "On" : "Off"} · When finished: ${FINISH_NAME[st.whenFinished] || st.whenFinished}` + (st.testMode ? " · TEST MODE" : "") + ` · version ${chrome.runtime.getManifest().version}`);
       saveRun({});

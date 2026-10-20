@@ -55,6 +55,7 @@
     scrollChats: 500,
     scrollWaitSec: 1.5, // S2: pause after each scroll
     unstickRetries: 2, // S3: "scroll up a little and back down" tries before deciding it's the bottom
+    bottomWaitSec: 60, // before deciding it's the bottom, keep trying this long (Business Suite sometimes pauses loading)
     buttonUsesScrollSettings: true, // S5: the "Scroll inbox to the bottom" button follows S1 too
     // When the run finishes normally (not after Stop or a problem pause)
     whenFinished: "nothing", // "nothing", "closeTab", "closeChrome" or "shutdown"
@@ -909,7 +910,7 @@
       this.setState("running");
       try {
         let screen = null;
-        if (cfg.order === "bottom") screen = await this.scrollToBottomFirst();
+        if (cfg.order === "bottom" || cfg.order === "bottomAll") screen = await this.scrollToBottomFirst();
         if (cfg.order === "screen") screen = await this.lowestOnScreen();
         if (cfg.order === "screen" && !screen) return;
         for (;;) {
@@ -1019,7 +1020,8 @@
     // Returns the chats that were loaded, so older chats that load in later stay out of this run.
     async scrollToBottomFirst() {
       const { cfg, hooks } = this;
-      const goal = scrollGoal(cfg, true);
+      // "bottomAll": scroll until nothing more loads, whatever the Scrolling settings say about how far.
+      const goal = scrollGoal(cfg, cfg.order !== "bottomAll");
       const end = Date.now() + cfg.loadAllMaxMinutes * 60000;
       const seen = new Set(), known = new Set();
       const note = (l) => { noteRows(l, cfg, seen); for (const r of getRows(l, cfg)) known.add(r.key); };
@@ -1035,7 +1037,10 @@
         still = grew ? 0 : still + 1;
         await hooks.state({ state: "running", reason: scrollProgress(goal, scrolls, seen.size, "Scrolling to the bottom first"), current: "" });
         if (still >= 2) {
-          await hooks.state({ state: "running", reason: "Reached the bottom of the inbox. Sending from the bottom up." });
+          const more = await keepTrying(cfg, (ms) => this.wait(ms), (left) =>
+            hooks.state({ state: "running", reason: `The inbox stopped loading (${seen.size} chats so far). Making sure it's the bottom… ${left} s`, current: "" }));
+          if (more) { still = 0; continue; }
+          await hooks.state({ state: "running", reason: `Reached the bottom of the inbox (${seen.size} chats, ${scrolls} scrolls). Sending from the bottom up.` });
           return null;
         }
         if (goalReached(goal, scrolls, seen.size)) {
@@ -1099,6 +1104,24 @@
     return ok;
   }
 
+  // Business Suite sometimes stops loading older chats for a while. Before calling it "the bottom",
+  // keep trying for bottomWaitSec (every 10 s). waitFn lets Pause/Stop work while waiting.
+  async function keepTrying(cfg, waitFn, onWait) {
+    const total = Math.max(0, +cfg.bottomWaitSec || 0) * 1000;
+    const end = Date.now() + total;
+    while (Date.now() < end) {
+      if (onWait) onWait(Math.ceil((end - Date.now()) / 1000));
+      await waitFn(Math.min(10000, end - Date.now()));
+      const list = findList(cfg);
+      if (!list) continue;
+      // Nudge it like a person would: up a little, then back down to the bottom.
+      list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight - 400);
+      await sleep(400);
+      if (await loadMore(list, cfg)) return true;
+    }
+    return false;
+  }
+
   // How far to scroll (S1). useLimits=false means "all the way to the bottom".
   function scrollGoal(cfg, useLimits) {
     if (!useLimits || cfg.scrollHow === "all") return { kind: "all" };
@@ -1149,7 +1172,18 @@
           if (!scrollJob.cancel) report("running", "Visible again, scrolling…");
         }
         if (scrollJob.cancel) { result = { ok: true, reachedEnd: false, message: "Scrolling stopped" }; break; }
-        if (still >= 2) { result = { ok: true, reachedEnd: true, message: "Reached the bottom of the inbox" }; break; }
+        if (still >= 2) {
+          const t0 = Date.now();
+          const more = await keepTrying(cfg, async (ms) => {
+            const stopAt = Date.now() + ms;
+            while (Date.now() < stopAt && !scrollJob.cancel) await sleep(Math.min(250, stopAt - Date.now()));
+            while (scrollJob.paused && !scrollJob.cancel) await sleep(200);
+          }, (left) => { if (!scrollJob.cancel) report("running", `The inbox stopped loading (${seen.size} chats so far). Making sure it's the bottom… ${left} s`); });
+          end += Date.now() - t0; // this waiting doesn't count toward the time limit
+          if (more && !scrollJob.cancel) { still = 0; continue; }
+          if (scrollJob.cancel) { result = { ok: true, reachedEnd: false, message: "Scrolling stopped" }; break; }
+          result = { ok: true, reachedEnd: true, message: "Reached the bottom of the inbox" }; break;
+        }
         if (goalReached(goal, scrolls, seen.size)) {
           result = { ok: true, reachedEnd: false, reachedGoal: true,
             message: goal.kind === "scrolls" ? `Scrolled ${scrolls} times` : `Loaded about ${goal.n} chats` };

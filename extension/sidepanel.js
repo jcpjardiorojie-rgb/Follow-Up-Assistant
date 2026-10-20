@@ -16,7 +16,7 @@ const DEF = {
   dupCheck: false, stopBy: "both", stopAfter: 3, backupOn: true, backupFolder: FollowUpEngine.DEFAULTS.backupFolder,
   notifyPC: true, notifyPhone: false, ntfyTopic: "", notifyOnPause: true, ntfyServer: "https://ntfy.sh",
   replyMode: "ask", autoCheckReplies: false, autoCheckMinutes: 10,
-  keepAwake: true, finishOnAlready: true, finishOnEnd: true, finishOnDaily: false, diaryToFile: true,
+  bottomWaitSec: 60, keepAwake: true, finishOnAlready: true, finishOnEnd: true, finishOnDaily: false, diaryToFile: true,
 };
 const BAD = new Set(["FAILED", "REVIEW", "UNKNOWN"]);
 let settings = {}, template = {}, templates = [], contacts = {}, history = {}, replies = {}, tabId = null, state = "idle", scrollState = "idle";
@@ -73,6 +73,7 @@ function fillForm() {
   $("scWait").value = settings.scrollWaitSec;
   $("scRetry").value = settings.unstickRetries;
   $("scMax").value = settings.loadAllMaxMinutes;
+  $("scPatience").value = settings.bottomWaitSec;
   $("scButton").checked = settings.buttonUsesScrollSettings;
   for (const r of document.querySelectorAll("input[name=whenFinished]")) r.checked = r.value === settings.whenFinished;
   $("fiSecs").value = settings.finishCountdownSec;
@@ -123,6 +124,7 @@ function readSettings() {
   settings.scrollWaitSec = Math.max(0, +$("scWait").value || 0);
   settings.unstickRetries = Math.min(10, Math.max(0, Math.round(+$("scRetry").value || 0)));
   settings.loadAllMaxMinutes = Math.max(1, Math.round(+$("scMax").value || 30));
+  settings.bottomWaitSec = Math.min(600, Math.max(0, Math.round(+$("scPatience").value || 0)));
   settings.buttonUsesScrollSettings = $("scButton").checked;
   const wf = document.querySelector("input[name=whenFinished]:checked");
   settings.whenFinished = wf ? wf.value : "nothing";
@@ -194,7 +196,7 @@ $("imgRemove").addEventListener("click", () => { template.imageDataUrl = ""; tem
 for (const id of ["sBetween", "sStep", "sCap", "sOrder", "sLastMine", "sSentDone", "sImgReq", "sTest", "aBlocked", "aNames", "aStop",
   "aHot", "aWarm", "aCold", "bAuto", "bLabelName", "scHow", "scCount", "scChats", "scWait", "scRetry", "scMax", "scButton", "fiSecs",
   "dCheck", "dAfter", "bkOn", "bkFolder", "nPC", "nPhone", "nTopic", "nPause", "rAuto", "rMins",
-  "sAwake", "foAlready", "foEnd", "foDaily", "bkLog"]) {
+  "sAwake", "foAlready", "foEnd", "foDaily", "bkLog", "scPatience"]) {
   $(id).addEventListener("change", readSettings);
 }
 $("aReset").addEventListener("click", () => {
@@ -511,7 +513,7 @@ chrome.storage.onChanged.addListener((ch) => {
 
 
 // ---------- Settings sections (L1): one-line summaries, remembered open sections, reset buttons ----------
-const ORDER_NAME = { top: "Top", bottom: "Bottom", screen: "Lowest on screen" };
+const ORDER_NAME = { top: "Top", bottom: "Bottom", bottomAll: "Bottom (all the way)", screen: "Lowest on screen" };
 const STOP_NAME = { both: "name + message", message: "message", name: "name", off: "skip only" };
 const FINISH_NAME = { nothing: "Do nothing", closeTab: "Close tab", closeChrome: "Close Chrome", shutdown: "Shut down" };
 function showSummaries() {
@@ -519,7 +521,7 @@ function showSummaries() {
   const put = (k, t) => { const el = $("sum_" + k); if (el) { el.textContent = t; el.title = t; } };
   put("start", `${ORDER_NAME[s.order] || s.order} · ${s.dailyCap}/day · ${s.betweenChatsSec} s` + (s.testMode ? " · TEST MODE" : ""));
   const far = s.scrollHow === "all" ? "to the bottom" : s.scrollHow === "chats" ? `about ${s.scrollChats} chats` : `${s.scrollCount} scrolls`;
-  put("scroll", `${far} · ${s.scrollWaitSec} s · ${s.unstickRetries} retries`);
+  put("scroll", `${far} · ${s.scrollWaitSec} s · ${s.unstickRetries} retries · waits ${s.bottomWaitSec} s at the bottom`);
   put("who", `${s.onlyIfLastFromMe ? "Last message mine" : "Everyone"} · Already messaged: ${s.dupCheck ? `On (${STOP_NAME[s.stopBy]}, ${s.stopAfter})` : "Off"}`);
   put("send", `Wait ${(s.stepDelayMs / 1000).toFixed(1)} s · image ${s.imageRequired ? "required" : "optional"}` + (s.moveSentToDone ? " · sent → Done" : ""));
   const tell = [s.notifyPC && "PC", s.notifyPhone && "phone"].filter(Boolean).join(" + ") || "no notifications";
@@ -529,7 +531,7 @@ function showSummaries() {
 }
 const SECTION_KEYS = {
   start: ["order", "dailyCap", "betweenChatsSec", "testMode", "keepAwake"],
-  scroll: ["scrollHow", "scrollCount", "scrollChats", "scrollWaitSec", "unstickRetries", "loadAllMaxMinutes", "buttonUsesScrollSettings"],
+  scroll: ["scrollHow", "scrollCount", "scrollChats", "scrollWaitSec", "unstickRetries", "loadAllMaxMinutes", "buttonUsesScrollSettings", "bottomWaitSec"],
   who: ["onlyIfLastFromMe", "dupCheck", "stopBy", "stopAfter"],
   send: ["stepDelayMs", "imageRequired", "moveSentToDone"],
   finish: ["whenFinished", "finishCountdownSec", "notifyPC", "notifyPhone", "notifyOnPause", "finishOnAlready", "finishOnEnd", "finishOnDaily"], // your ntfy topic is kept

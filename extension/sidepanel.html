@@ -153,7 +153,7 @@
     <summary><span class="sect">1 · Start &amp; limits</span><small class="sum" id="sum_start"></small></summary>
     <div class="secbody">
       <div class="grid">
-        <label class="wide">Start from<select id="sOrder"><option value="top">Top (newest first)</option><option value="bottom">Bottom: scroll down first (see Scrolling), then go up</option><option value="screen">Lowest chat on screen now (no scrolling), then up</option></select></label>
+        <label class="wide">Start from<select id="sOrder"><option value="top">Top (newest first)</option><option value="bottomAll">Bottom: scroll down until nothing more loads, then send going up</option><option value="bottom">Bottom: scroll down as far as Scrolling says, then go up</option><option value="screen">Lowest chat on screen now (no scrolling), then up</option></select></label>
         <label>Daily limit<input id="sCap" type="number" min="1" step="1"></label>
         <label>Seconds between chats<input id="sBetween" type="number" min="0" step="1"></label>
       </div>
@@ -166,7 +166,7 @@
   <details class="sec" data-sec="scroll">
     <summary><span class="sect">2 · Scrolling</span><small class="sum" id="sum_scroll"></small></summary>
     <div class="secbody" id="scrollBox">
-      <label class="hint" for="scHow">How far to scroll before sending (used by Start from: Bottom)</label>
+      <label class="hint" for="scHow">How far to scroll before sending (used by “Bottom: scroll down as far as Scrolling says”)</label>
       <select id="scHow" class="field">
         <option value="count">A set number of scrolls</option>
         <option value="chats">Until about a number of chats are loaded</option>
@@ -178,6 +178,7 @@
         <label>Wait between scrolls (sec)<input id="scWait" type="number" min="0" step="0.1"></label>
         <label>If stuck: scroll up &amp; retry (times)<input id="scRetry" type="number" min="0" max="10" step="1"></label>
         <label>Give up scrolling after (min)<input id="scMax" type="number" min="1" step="1"></label>
+        <label>Before deciding it's the bottom, keep trying (sec)<input id="scPatience" type="number" min="0" max="600" step="10"></label>
       </div>
       <label class="check"><input id="scButton" type="checkbox"> The “Scroll inbox to the bottom” button uses these settings too</label>
       <p class="hint">For no scrolling at all, choose Start from: Lowest chat on screen.</p>
