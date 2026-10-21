@@ -323,7 +323,7 @@ def test_scroll_to_bottom_finishes_on_a_long_inbox(page):
     page.evaluate("__mock.flags.virtual = true; __mock.flags.sticky = true")
     import time
     t = time.time()
-    r = page.evaluate("FollowUpEngine.tools.loadWholeInbox({}, null, 300)")
+    r = page.evaluate("FollowUpEngine.tools.loadWholeInbox({ bottomWaitSec: 0 }, null, 300)")
     assert r["reachedEnd"] and r["message"] == "Reached the bottom of the inbox"
     assert time.time() - t < 120
     assert page.evaluate("__mock.loaded") >= 62
@@ -430,17 +430,40 @@ def test_off_still_never_sends_the_same_message_twice(page):
     assert len(sent_ids) == len(set(sent_ids)) == 7
 
 
-def test_facebook_user_is_moved_to_done_even_after_a_failed_try(page):
+def test_facebook_user_is_moved_to_done_from_the_list_without_opening(page):
+    # The first click on Done does nothing (seen on the real page now and then): it clicks again.
     page.evaluate("__mock.flags.doneFailsOnce = true")
-    first = run(page, maxWaitMs=180000)
-    fails = [e for e in first["log"] if e.get("code") == "DONE_FAILED"]
-    assert {e["name"] for e in fails} >= {"Facebook user"}
-    # Next run (same campaign memory): they are tried again, not skipped as "already handled".
-    res = run(page, maxWaitMs=120000)
+    res = run(page, maxWaitMs=180000)
     m = mock(page)
     by_id = {i: n for i, n, _ in m["names"]}
     assert sorted(by_id[i] for i in m["done"]).count("Facebook user") == 2
-    assert not [e for e in res["log"] if e["name"] == "Facebook user" and e["status"] == "SKIPPED"]
+    assert "Facebook user" not in page.evaluate("__mock.opened || []")
+    fb = [e for e in res["log"] if e["name"] == "Facebook user"]
+    assert len(fb) == 2 and all(e["status"] == "EXCLUDED" and e["reason"].endswith("moved to Done") for e in fb)
+    # "Can't message" chats keep their old behavior (a failed Done is still a Problem for them).
+
+
+def test_facebook_user_falls_back_to_opening_when_rows_have_no_done(page):
+    page.evaluate("__mock.flags.noRowDone = true")
+    res = run(page, maxWaitMs=180000)
+    m = mock(page)
+    by_id = {i: n for i, n, _ in m["names"]}
+    assert sorted(by_id[i] for i in m["done"]).count("Facebook user") == 2
+    assert "Facebook user" in page.evaluate("__mock.opened || []")
+    assert not [e for e in res["log"] if e["name"] == "Facebook user" and e["status"] != "EXCLUDED"]
+
+
+def test_facebook_user_never_pauses_the_run_when_done_doesnt_work(page):
+    page.evaluate("__mock.flags.doneNeverFor = 'Facebook user'")
+    res = run(page, maxConsecutiveFailures=1, maxWaitMs=240000)
+    assert res["state"] == "finished", res["states"][-1]
+    assert not [s for s in res["states"] if s.get("state") == "paused"]
+    fb = [e for e in res["log"] if e["name"] == "Facebook user"]
+    assert fb and all(e["status"] == "SKIPPED" and "left in the inbox" in e["reason"] for e in fb)
+    assert not [e for e in res["log"] if e["status"] in ("FAILED", "REVIEW")]
+    # Everyone who can be messaged still got their follow-up.
+    assert not [s for s in mock(page)["sent"] if s.get("name") == "Facebook user"]
+    assert len([e for e in res["log"] if e["status"] == "SENT"]) == 14  # same as a normal run
 
 
 def test_auto_reply_goes_only_to_people_who_wrote_last(page):

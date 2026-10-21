@@ -610,6 +610,53 @@
     return ok ? { ok: true } : { ok: false, why: "Clicked Done but the chat stayed in the list" };
   }
 
+  // "Facebook user" chats: click the ✔ on their row in the list, without opening the chat.
+  // Picks the right one of several identical rows and tries twice. It counts as Done only when this
+  // row really left: fewer rows with this name and photo, or the rows below it moved up one place
+  // (that also works when a new identical row loads at the bottom, or the list just redraws).
+  async function doneFromList(ctx, row) {
+    const { cfg, hooks, list } = ctx;
+    const sameKey = () => getRows(list, cfg).filter((r) => r.key === row.key);
+    const keys = () => getRows(list, cfg).map((r) => r.key);
+    const eq = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    const occ = Math.max(0, sameKey().findIndex((r) => r.el === row.el));
+    let why = "the ✔ on the list row wasn't found";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const cands = sameKey();
+      let live = cands.find((r) => r.el === row.el) || cands[occ] || cands[0];
+      if (!live) return { ok: false, why: "the chat wasn't in the list anymore" };
+      if (await bringIntoView(live.el, list)) await sleep(150);
+      // The list can redraw while we hover (e.g. more chats loading), so look the row up again after.
+      let btn = null;
+      for (let h = 0; h < 2 && !btn; h++) {
+        const at = sameKey().findIndex((r) => r.el === live.el);
+        await hover(live.el, hooks);
+        await sleep(400);
+        const now = sameKey();
+        live = now.find((r) => r.el === live.el) || now[at >= 0 ? at : occ] || now[0];
+        if (!live) return { ok: false, why: "the chat wasn't in the list anymore" };
+        btn = findLabeled(cfg.doneLabels, (el) => live.el.contains(el))[0];
+      }
+      if (!btn) return { ok: false, why };
+      const before = keys(), count = before.filter((k) => k === row.key).length;
+      const idx = getRows(list, cfg).findIndex((r) => r.el === live.el);
+      const left = () => {
+        const now = keys();
+        if (now.filter((k) => k === row.key).length < count) return true;
+        if (idx < 0 || !eq(now.slice(0, idx), before.slice(0, idx))) return false;
+        const m = Math.min(5, before.length - idx - 1, now.length - idx);
+        return m > 0 && eq(now.slice(idx, idx + m), before.slice(idx + 1, idx + 1 + m)) && !eq(now.slice(idx, idx + m), before.slice(idx, idx + m));
+      };
+      try { await click(btn, hooks); }
+      catch (e) { if (e.message !== "STALE") throw e; why = "the list redrew"; await sleep(400); continue; }
+      if (await waitFor(left, 4000)) return { ok: true };
+      why = "clicked ✔ but the chat stayed in the list";
+      await sleep(1500);
+      if (left()) return { ok: true };
+    }
+    return { ok: false, why };
+  }
+
   // Plain-language explanation for every kind of problem: what happened, why, and how to fix it.
   const HELP = {
     CLICK_FAILED: {
@@ -712,6 +759,15 @@
     if (replying && row.fromMe) return out("SKIPPED", "You already answered them");
     if (!replying && !excludedName && cfg.onlyIfLastFromMe && !row.fromMe) return out("SKIPPED", "Customer wrote last — reply to them yourself");
 
+    // "Facebook user": the name says it all, so it's moved to Done from the list without opening the chat.
+    // If the list row has no ✔, it falls back to opening the chat (below), the way it always worked.
+    if (!replying && excludedName) {
+      const label = `Name is "${row.name}"`;
+      if (cfg.testMode) return out("EXCLUDED", label + " (test mode: Done not clicked)");
+      const m = await doneFromList(ctx, row);
+      if (m.ok) return out("EXCLUDED", label + " → moved to Done");
+    }
+
     // Already messaged? "Stop by name" decides from the list, without opening the chat.
     const thisRun = !!run && run.sentThisRun.has(row.name);
     const nameHit = !replying && !excludedName && hooks.nameSent ? !!(await hooks.nameSent(row.name)) : false;
@@ -760,7 +816,17 @@
     const blocked = replying ? null : excludedName ? `Name is "${row.name}"` : bodyHas(cfg.blockedTexts) ? "Can't message this person" : null;
     if (blocked) {
       if (cfg.testMode) return out("EXCLUDED", blocked + " (test mode: Done not clicked)", { id });
-      const m = await moveToDone(ctx, row);
+      let m = await moveToDone(ctx, row);
+      if (!m.ok && excludedName) {
+        // "Facebook user": one more try, then leave it in the inbox and keep going (no pause for these).
+        await sleep(1500);
+        const again = await doneFromList(ctx, row);
+        if (again.ok) m = { ok: true };
+        else {
+          const why2 = again.why === m.why ? m.why : m.why + "; " + again.why;
+          return out("SKIPPED", blocked + " → left in the inbox (Done didn't work: " + why2 + ")", { id });
+        }
+      }
       return m.ok ? out("EXCLUDED", blocked + " → moved to Done", { id }) : problem("DONE_FAILED", blocked + ", but " + m.why, { id, countsAsFailure: true });
     }
     if (await hooks.alreadyDone(id)) return out("SKIPPED", replying ? "Already auto-replied" : "Already handled in this campaign", { id });
@@ -956,6 +1022,10 @@
           let res;
           try { res = await processRow({ cfg, hooks, list, run: this }, row); }
           catch (e) { res = { time: new Date().toISOString(), name: row.name, status: "FAILED", reason: "Error: " + (e && e.message ? e.message : e), code: "ERROR", help: HELP.ERROR }; }
+          // "Facebook user" chats are never worth a pause: a problem on one becomes a grey note.
+          if ((res.status === "FAILED" || res.status === "REVIEW") && cfg.excludeNames.some((n) => low(n) === low(row.name))) {
+            res = Object.assign({}, res, { status: "SKIPPED", reason: "Left in the inbox: " + res.reason, countsAsFailure: false });
+          }
           if (res.status === "STOP") { await hooks.log(Object.assign(res, { status: "REVIEW" })); this.pause(res.reason + ". " + HELP.META_WARNING.fix); continue; }
           await hooks.log(res);
           // A chat moved to Done has left the list; another row with the same name

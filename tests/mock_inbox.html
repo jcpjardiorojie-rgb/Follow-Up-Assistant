@@ -119,7 +119,8 @@
           ? `<div class="avatar" style="background:#ddd"><svg width="40" height="40"><circle cx="20" cy="15" r="7" fill="#fff"/></svg></div>`
           : `<img class="avatar" src="${AV(c.color)}" alt="">`) +
         `<div class="meta"><div class="top"><span class="name"></span><span class="time">${c.time}</span></div><div class="preview"></div></div>` +
-        `<button class="rowdone" aria-label="Move to done">✓</button>`;
+        // flags.noRowDone: the list rows have no ✔ (only the open chat has one)
+        (mock.flags.noRowDone ? "" : `<button class="rowdone" aria-label="Move to done">✓</button>`);
       // flags.adFor: a chat started from an ad shows the customer's question where the name normally is
       r.querySelector(".name").textContent = mock.flags.adFor === c.name ? "I am very interested. How would I become part of this opportunity?" : c.name;
       r.querySelector(".preview").textContent = (last.me ? "You: " : "") + last.text;
@@ -153,6 +154,7 @@
   });
 
   function open(c) {
+    mock.opened = mock.opened || []; mock.opened.push(c.name);
     $("#head").innerHTML = ""; $("#msgs").innerHTML = ""; $("#bottom").innerHTML = "<div style='padding:10px'>Loading…</div>";
     setTimeout(() => {
       mock.selected = c;
@@ -278,6 +280,8 @@
   function moveToDone(c) {
     // flags.doneFailsOnce: the first click on Done does nothing (seen on the real page now and then)
     if (mock.flags.doneFailsOnce && !c.doneFailed) { c.doneFailed = true; return; }
+    // flags.doneNeverFor: Done never works for chats with this name
+    if (mock.flags.doneNeverFor === c.name) return;
     setTimeout(() => {
       c.done = true; mock.done.push(c.id);
       if (mock.selected === c) mock.selected = null;

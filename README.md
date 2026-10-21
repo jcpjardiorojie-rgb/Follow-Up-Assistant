@@ -63,6 +63,16 @@ Safety rules built into both versions:
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
    by mistake. The badge at the top says **Ready** when it's connected.
 
+## New in 1.8.3
+
+* **"Facebook user" chats no longer pause the follow-up.**
+  * They're moved to Done **from the inbox list** (the ✔ on the row), without opening the chat. If the row has
+    no ✔, it opens the chat and uses the ✔ at the top, like before.
+  * If the first click doesn't work, it clicks once more. It only calls it Done when that chat really left the list.
+  * If Done still doesn't work, the chat is left in the inbox with a grey note and the run keeps going. It's not
+    a Problem and never counts toward "3 problems in a row".
+* "Can't message" chats and the sending of follow-ups are unchanged.
+
 ## New in 1.8.2
 
 * The version number now shows at the top right of the side panel, just above **Ready**, so you can see at a

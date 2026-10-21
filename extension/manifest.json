@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FollowUp Copilot by Rojie Jardio",
   "description": "Sends your follow-up message to each chat in Meta Business Suite and moves chats you can't message to Done.",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "permissions": [
     "storage",
     "unlimitedStorage",
