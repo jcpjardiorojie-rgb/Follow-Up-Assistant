@@ -63,6 +63,13 @@ Safety rules built into both versions:
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
    by mistake. The badge at the top says **Ready** when it's connected.
 
+## New in 1.8.2
+
+* The version number now shows at the top right of the side panel, just above **Ready**, so you can see at a
+  glance if you have the latest version.
+
+![Version above Ready](docs/screenshots/option-a-version.png)
+
 ## New in 1.8.1
 
 * **New "Start from" choice (Settings → 1): "Bottom: scroll down until nothing more loads, then send going up".**

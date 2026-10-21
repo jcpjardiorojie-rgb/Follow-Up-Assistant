@@ -27,6 +27,8 @@ button.danger { color: var(--bad); }
 button.small { padding: 4px 8px; font-size: 12px; }
 .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .sub, .hint { color: var(--muted); font-size: 12px; }
+.topright { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.ver { font-size: 11px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .pill { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 99px; background: var(--sunk); white-space: nowrap; }
 .pill.running { background: var(--good-soft); color: var(--good); }
 .pill.paused { background: var(--warn-soft); color: var(--warn); }

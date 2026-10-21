@@ -1,5 +1,6 @@
 // Side panel: edits the message and settings, and drives the engine in the Business Suite tab.
 const $ = (id) => document.getElementById(id);
+try { $("ver").textContent = "v" + chrome.runtime.getManifest().version; } catch (e) {}
 const DEF = {
   template: "Hi {first_name}! Just following up po 😊",
   fallbackName: "there",

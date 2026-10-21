@@ -635,3 +635,12 @@ def test_log_tab_last_runs_keep_awake_and_which_endings_shut_down(ext):
     panel.click("#dCopy")
     panel.wait_for_selector("#dStatus:has-text('Copied')")
     assert "Ended: Daily limit of 3 reached" in panel.evaluate("navigator.clipboard.readText()")
+
+
+def test_version_shows_above_the_status(ext):
+    _, panel, _ = ext
+    import json, pathlib
+    want = json.loads((pathlib.Path(__file__).parent.parent / "extension" / "manifest.json").read_text())["version"]
+    assert panel.text_content("#ver") == "v" + want
+    ver, pill = panel.locator("#ver").bounding_box(), panel.locator("#pill").bounding_box()
+    assert ver["y"] + ver["height"] <= pill["y"] + 1
