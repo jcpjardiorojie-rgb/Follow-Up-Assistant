@@ -644,3 +644,84 @@ def test_version_shows_above_the_status(ext):
     assert panel.text_content("#ver") == "v" + want
     ver, pill = panel.locator("#ver").bounding_box(), panel.locator("#pill").bounding_box()
     assert ver["y"] + ver["height"] <= pill["y"] + 1
+
+
+FAKE_HIDDEN = """async (on) => {
+  const [t] = await chrome.tabs.query({ url: "https://business.facebook.com/*" });
+  await chrome.scripting.executeScript({ target: { tabId: t.id }, args: [on], func: (on) => {
+    if (!window.__fakeHiddenSet) { Object.defineProperty(document, "hidden", { configurable: true, get: () => !!window.__fakeHidden }); window.__fakeHiddenSet = true; }
+    window.__fakeHidden = on; document.dispatchEvent(new Event("visibilitychange"));
+  } });
+}"""
+INBOX_ACTIVE = """async () => (await chrome.tabs.query({ url: "https://business.facebook.com/*" }))[0].active"""
+
+
+def _tick(panel, ids, on=True):
+    _open_settings(panel)
+    for i in ids:
+        panel.evaluate("([i, on]) => { const el = document.getElementById(i); el.checked = on; el.dispatchEvent(new Event('change')); }", [i, on])
+
+
+def test_hidden_window_options_are_off_by_default_and_change_nothing(ext):
+    inbox, panel, _ = ext
+    _open_settings(panel)
+    assert not any(panel.is_checked(f"#{i}") for i in ("hFront", "hHelp", "hLauncher"))
+    panel.evaluate(FAKE_HIDDEN, True)
+    panel.click("#tLoad")
+    panel.wait_for_selector("#scrollMsg:has-text('Waiting: the Business Suite window is hidden')")
+    panel.wait_for_timeout(500)
+    assert panel.is_hidden("#hiddenScroll") and not panel.evaluate(INBOX_ACTIVE)  # same as before: just the message
+    panel.click("#tLoadStop")
+    panel.wait_for_selector("#scrollBar", state="hidden")
+
+
+def test_hidden_window_shows_why_with_buttons_and_continues_when_visible(ext):
+    inbox, panel, _ = ext
+    _tick(panel, ["hHelp", "hLauncher"])
+    panel.evaluate(FAKE_HIDDEN, True)
+    panel.click("#tLoad")
+    # Business Suite isn't the tab showing (the panel is), so that's the reason given.
+    panel.wait_for_selector("#hiddenScroll .hbWhy:has-text(\"isn't the tab showing\")")
+    assert panel.is_hidden("#hiddenScroll .hbLaunch")
+    # Showing Business Suite: tab active and window in front → now it's "behind another window" + launcher tip.
+    panel.click("#hiddenScroll .hbShow")
+    assert panel.evaluate(INBOX_ACTIVE)
+    panel.wait_for_selector("#hiddenScroll .hbLaunch", state="visible", timeout=8000)
+    assert "behind another window" in panel.text_content("#hiddenScroll .hbWhy")
+    # Visible again: it continues straight away and the box goes.
+    panel.evaluate(FAKE_HIDDEN, False)
+    panel.wait_for_selector("#hiddenScroll", state="hidden", timeout=3000)
+    assert "Waiting" not in panel.text_content("#scrollMsg")
+    if panel.is_visible("#tLoadStop"):
+        panel.click("#tLoadStop")
+    panel.wait_for_selector("#scrollBar", state="hidden", timeout=15000)
+    # Stop button in the box works too.
+    panel.bring_to_front()
+    panel.evaluate(FAKE_HIDDEN, True)
+    panel.click("#tLoad")
+    panel.wait_for_selector("#hiddenScroll .hbStop", state="visible")
+    panel.click("#hiddenScroll .hbStop")
+    panel.wait_for_selector("#scrollBar", state="hidden")
+    assert panel.is_hidden("#hiddenScroll")
+
+
+def test_bring_business_suite_to_the_front_when_ticked(ext):
+    inbox, panel, _ = ext
+    _tick(panel, ["hFront"])
+    panel.bring_to_front()
+    assert not panel.evaluate(INBOX_ACTIVE)
+    panel.click("#tLoad")
+    assert panel.evaluate(INBOX_ACTIVE)
+    if panel.is_visible("#tLoadStop"):
+        panel.click("#tLoadStop")
+
+
+def test_hidden_window_help_also_shows_for_a_run(ext):
+    inbox, panel, _ = ext
+    _tick(panel, ["hHelp"])
+    panel.evaluate(FAKE_HIDDEN, True)
+    panel.click("#start")
+    panel.wait_for_selector("#hiddenRun .hbWhy:has-text('Waiting')", timeout=15000)
+    panel.click("#hiddenRun .hbStop")
+    panel.wait_for_selector("#pill:has-text('Stopped')", timeout=15000)
+    panel.wait_for_selector("#hiddenRun", state="hidden")

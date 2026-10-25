@@ -17,7 +17,7 @@ const DEF = {
   dupCheck: false, stopBy: "both", stopAfter: 3, backupOn: true, backupFolder: FollowUpEngine.DEFAULTS.backupFolder,
   notifyPC: true, notifyPhone: false, ntfyTopic: "", notifyOnPause: true, ntfyServer: "https://ntfy.sh",
   replyMode: "ask", autoCheckReplies: false, autoCheckMinutes: 10,
-  bottomWaitSec: 60, keepAwake: true, finishOnAlready: true, finishOnEnd: true, finishOnDaily: false, diaryToFile: true,
+  bottomWaitSec: 60, frontWhenHidden: false, hiddenHelp: false, launcherCheck: false, keepAwake: true, finishOnAlready: true, finishOnEnd: true, finishOnDaily: false, diaryToFile: true,
 };
 const BAD = new Set(["FAILED", "REVIEW", "UNKNOWN"]);
 let settings = {}, template = {}, templates = [], contacts = {}, history = {}, replies = {}, tabId = null, state = "idle", scrollState = "idle";
@@ -79,6 +79,9 @@ function fillForm() {
   for (const r of document.querySelectorAll("input[name=whenFinished]")) r.checked = r.value === settings.whenFinished;
   $("fiSecs").value = settings.finishCountdownSec;
   $("sAwake").checked = settings.keepAwake;
+  $("hFront").checked = !!settings.frontWhenHidden;
+  $("hHelp").checked = !!settings.hiddenHelp;
+  $("hLauncher").checked = !!settings.launcherCheck;
   $("foAlready").checked = settings.finishOnAlready;
   $("foEnd").checked = settings.finishOnEnd;
   $("foDaily").checked = settings.finishOnDaily;
@@ -131,6 +134,9 @@ function readSettings() {
   settings.whenFinished = wf ? wf.value : "nothing";
   settings.finishCountdownSec = Math.max(10, Math.round(+$("fiSecs").value || 60));
   settings.keepAwake = $("sAwake").checked;
+  settings.frontWhenHidden = $("hFront").checked;
+  settings.hiddenHelp = $("hHelp").checked;
+  settings.launcherCheck = $("hLauncher").checked;
   settings.finishOnAlready = $("foAlready").checked;
   settings.finishOnEnd = $("foEnd").checked;
   settings.finishOnDaily = $("foDaily").checked;
@@ -197,7 +203,7 @@ $("imgRemove").addEventListener("click", () => { template.imageDataUrl = ""; tem
 for (const id of ["sBetween", "sStep", "sCap", "sOrder", "sLastMine", "sSentDone", "sImgReq", "sTest", "aBlocked", "aNames", "aStop",
   "aHot", "aWarm", "aCold", "bAuto", "bLabelName", "scHow", "scCount", "scChats", "scWait", "scRetry", "scMax", "scButton", "fiSecs",
   "dCheck", "dAfter", "bkOn", "bkFolder", "nPC", "nPhone", "nTopic", "nPause", "rAuto", "rMins",
-  "sAwake", "foAlready", "foEnd", "foDaily", "bkLog", "scPatience"]) {
+  "sAwake", "foAlready", "foEnd", "foDaily", "bkLog", "scPatience", "hFront", "hHelp", "hLauncher"]) {
   $(id).addEventListener("change", readSettings);
 }
 $("aReset").addEventListener("click", () => {
@@ -269,6 +275,8 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.state) {
     setState(msg.state.state, msg.state.reason, msg.state.current);
     $("seeProblems").hidden = !(msg.state.state === "paused" && /Problems tab/.test(msg.state.reason || ""));
+    waitingHidden.run = msg.state.state === "running" && msg.state.code === "hidden";
+    showHiddenHelp();
   }
   if (msg.stats) showStats(msg.stats);
   if (msg.entry) {
@@ -531,7 +539,7 @@ function showSummaries() {
   put("helper", s.backupOn ? s.backupFolder : "Saving names: off");
 }
 const SECTION_KEYS = {
-  start: ["order", "dailyCap", "betweenChatsSec", "testMode", "keepAwake"],
+  start: ["order", "dailyCap", "betweenChatsSec", "testMode", "keepAwake", "frontWhenHidden", "hiddenHelp", "launcherCheck"],
   scroll: ["scrollHow", "scrollCount", "scrollChats", "scrollWaitSec", "unstickRetries", "loadAllMaxMinutes", "buttonUsesScrollSettings", "bottomWaitSec"],
   who: ["onlyIfLastFromMe", "dupCheck", "stopBy", "stopAfter"],
   send: ["stepDelayMs", "imageRequired", "moveSentToDone"],
@@ -817,6 +825,34 @@ async function tool(cmd, busy) {
     out.textContent = r.message || (r.ok ? "Done" : "Didn't work");
   }
 }
+// S2/S3 (tick boxes): while it waits because Business Suite is hidden, say why, with buttons.
+const waitingHidden = { run: false, scroll: false };
+let hiddenTimer = null;
+async function showHiddenHelp() {
+  const boxes = { run: $("hiddenRun"), scroll: $("hiddenScroll") };
+  const want = settings.hiddenHelp || settings.launcherCheck;
+  const any = want && (waitingHidden.run || waitingHidden.scroll);
+  clearTimeout(hiddenTimer);
+  if (!any) { boxes.run.hidden = boxes.scroll.hidden = true; return; }
+  const r = await hiddenReason();
+  for (const [k, box] of Object.entries(boxes)) {
+    const on = waitingHidden[k] && !!r && (settings.hiddenHelp || (settings.launcherCheck && r.covered));
+    box.hidden = !on;
+    if (!on) continue;
+    const why = box.querySelector(".hbWhy");
+    why.hidden = !settings.hiddenHelp;
+    why.textContent = `⏸ Waiting: ${r.why}. FollowUp continues the moment it's visible.`;
+    box.querySelector(".hbLaunch").hidden = !(settings.launcherCheck && r.covered);
+    box.querySelector(".hbBtns").hidden = !settings.hiddenHelp;
+  }
+  hiddenTimer = setTimeout(showHiddenHelp, 3000); // the reason can change (e.g. you switched tabs)
+}
+for (const b of document.querySelectorAll(".hbShow")) b.addEventListener("click", async () => {
+  const r = await hiddenReason();
+  if (r && r.tab) await showInboxTab(r.tab);
+});
+for (const b of document.querySelectorAll(".hbStop")) b.addEventListener("click", () => send(b.closest("#hiddenScroll") ? "stopScroll" : "stop"));
+
 // "Scroll inbox to the bottom": Start → Pause → Resume, with its own Stop.
 
 function showScroll(p) {
@@ -826,6 +862,8 @@ function showScroll(p) {
   $("tLoad").classList.toggle("primary", active);
   $("scrollBar").hidden = !active;
   if (p.message) $("scrollMsg").textContent = p.message;
+  waitingHidden.scroll = active && /^Waiting: the Business Suite window is hidden/.test(p.message || "");
+  showHiddenHelp();
   if (p.state === "done") { $("toolOut").hidden = false; $("toolOut").textContent = `${p.message} (${p.rows} chats on screen)`; }
   $("start").disabled = active || state === "running" || state === "paused";
 }

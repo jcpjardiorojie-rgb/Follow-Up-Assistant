@@ -67,6 +67,9 @@
     finishCountdownSec: 60,
     // "Already messaged" (Settings): never send the same message twice, and stop when the run reaches
     // people who already got it (chats you message jump to the top, so that's where the last run started).
+    frontWhenHidden: false, // S1 (tick box): bring Business Suite to the front when Start/Scroll is pressed while it's hidden
+    hiddenHelp: false, // S2 (tick box): explain why it waits, with buttons, and continue the moment it's visible
+    launcherCheck: false, // S3 (tick box): say when Chrome wasn't opened with the FollowUp Chrome icon
     waitWhenHidden: true, // F4: while the Business Suite window is hidden (minimized, screen locked), wait instead of guessing
     stallRetries: 3, // F4: when chats stop loading, wait a minute and try again this many times before deciding it's the end
     dupCheck: false, // off = works exactly like 1.6.0; on = don't send if FollowUp already sent this message to them
@@ -140,6 +143,14 @@
     if (r.width < 2 || r.height < 2) return false;
     const cs = getComputedStyle(el);
     return cs.visibility !== "hidden" && cs.display !== "none";
+  }
+  // Like sleep, but ends early when the page becomes visible or hidden (S2: continue the moment it's visible).
+  function sleepOrVisible(ms) {
+    return new Promise((res) => {
+      const done = () => { document.removeEventListener("visibilitychange", done); clearTimeout(t); res(); };
+      const t = setTimeout(done, ms);
+      document.addEventListener("visibilitychange", done);
+    });
   }
   async function waitFor(fn, timeoutMs, everyMs = 200) {
     const end = Date.now() + timeoutMs;
@@ -950,7 +961,7 @@
       // F4: a hidden window can't load chats, so wait for it instead of mistaking it for the end of the inbox.
       if (this.cfg.waitWhenHidden !== false && typeof document !== "undefined" && document.hidden) {
         this.hooks.state({ state: "running", reason: "Waiting: the Business Suite window is hidden (minimized or screen locked). It continues by itself when it's visible.", code: "hidden" });
-        while (document.hidden && !this.stopped && !this.paused) await sleep(1000);
+        while (document.hidden && !this.stopped && !this.paused) await (this.cfg.hiddenHelp ? sleepOrVisible(1000) : sleep(1000));
         if (this.stopped) throw STOP;
         this.hooks.state({ state: "running", reason: "Visible again, continuing.", code: "visible" });
         await this.gate();
@@ -1237,7 +1248,7 @@
           // F4: a hidden window can't load chats; wait instead of deciding it's the bottom.
           report("running", `Waiting: the Business Suite window is hidden (${seen.size} chats loaded so far). It continues when it's visible.`);
           const t0 = Date.now();
-          while (document.hidden && !scrollJob.cancel) await sleep(1000);
+          while (document.hidden && !scrollJob.cancel) await (cfg.hiddenHelp ? sleepOrVisible(1000) : sleep(1000));
           end += Date.now() - t0;
           if (!scrollJob.cancel) report("running", "Visible again, scrolling…");
         }

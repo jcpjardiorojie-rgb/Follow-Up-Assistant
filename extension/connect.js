@@ -48,6 +48,34 @@ async function openInbox(url) {
   return chrome.tabs.create({ url: url || DEFAULT_INBOX, active: true });
 }
 
+// S1: if the inbox isn't showing (another tab on top, minimized, or its window is behind another one),
+// bring it to the front. Only when "Bring Business Suite to the front" is ticked.
+const FRONT_CMDS = ["start", "toggleRun", "resume", "loadInbox", "toggleScroll", "resumeScroll"];
+async function showInboxTab(tab) {
+  await chrome.tabs.update(tab.id, { active: true });
+  await chrome.windows.update(tab.windowId, { focused: true });
+}
+async function frontIfHidden(tab) {
+  try {
+    const win = await chrome.windows.get(tab.windowId);
+    if (tab.active && win.state !== "minimized" && win.focused) return false;
+    await showInboxTab(tab);
+    await new Promise((r) => setTimeout(r, 700)); // let the page become visible before it starts
+    return true;
+  } catch (_) { return false; }
+}
+// Why the inbox page counts as hidden, in plain words (S2/S3).
+async function hiddenReason() {
+  const tab = await findInboxTab(await savedAssetId());
+  if (!tab) return null;
+  try {
+    const win = await chrome.windows.get(tab.windowId);
+    if (win.state === "minimized") return { tab, covered: false, why: "the Business Suite window is minimized" };
+    if (!tab.active) return { tab, covered: false, why: "Business Suite isn't the tab showing in its window (another tab is on top)" };
+    return { tab, covered: true, why: "the Business Suite window is behind another window (or the screen is locked)" };
+  } catch (_) { return null; }
+}
+
 async function sendToInbox(cmd, extra) {
   const assetId = await savedAssetId();
   const tab = await findInboxTab(assetId);
@@ -55,6 +83,10 @@ async function sendToInbox(cmd, extra) {
   const tabAsset = assetIdOf(tab.url);
   if (START_CMDS.includes(cmd) && assetId && tabAsset && tabAsset !== assetId) {
     return { ok: false, tab, wrongPage: true, message: `The open inbox is a different Facebook Page (id ${tabAsset}) than your saved link (id ${assetId}). Press “Open my inbox” first.` };
+  }
+  if (FRONT_CMDS.includes(cmd)) {
+    const { settings } = await chrome.storage.local.get("settings");
+    if (settings && settings.frontWhenHidden) await frontIfHidden(tab);
   }
   const msg = Object.assign({ to: "content", cmd }, extra || {});
   try {

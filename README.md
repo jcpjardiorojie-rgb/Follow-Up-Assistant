@@ -63,6 +63,19 @@ Safety rules built into both versions:
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
    by mistake. The badge at the top says **Ready** when it's connected.
 
+## New in 1.8.4
+
+Three new tick boxes in **Settings → 1 · Start & limits**, all **off** by default (nothing changes until you tick them).
+They help when Business Suite is hidden (another tab on top, minimized, or behind another window), which makes
+FollowUp wait instead of scrolling:
+
+* **Bring Business Suite to the front when I press Start or Scroll.**
+* **While it waits, show why**, with **Show Business Suite** and **Stop** buttons, and continue the moment it's visible.
+* **Tell me when Chrome wasn't opened with the FollowUp Chrome icon** (that icon keeps a covered window working).
+
+![Tick boxes](docs/screenshots/option-a-hidden-options.png)
+![Why it waits](docs/screenshots/option-a-hidden-covered.png)
+
 ## New in 1.8.3
 
 * **"Facebook user" chats no longer pause the follow-up.**

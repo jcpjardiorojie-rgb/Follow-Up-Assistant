@@ -107,6 +107,11 @@
 <section class="card run">
   <div id="reason" class="reason">Press Start when your Inbox is open.</div>
   <button id="seeProblems" class="small" hidden>See what went wrong and how to fix it →</button>
+  <div id="hiddenRun" class="hiddenbox" hidden>
+    <div class="hbWhy"></div>
+    <div class="hbLaunch" hidden>Chrome wasn't opened with the <b>FollowUp Chrome</b> icon, so a window that's covered counts as hidden. To fix: close all Chrome windows (also Chrome in the taskbar tray), then open Chrome with the FollowUp Chrome icon on your desktop.</div>
+    <div class="hbBtns"><button class="small primary hbShow">Show Business Suite</button><button class="small danger hbStop">Stop</button></div>
+  </div>
   <div id="current" class="current"></div>
   <div id="finishBar" class="finishbar" hidden>
     <span id="finishText">In 60 s: shut down the computer</span>
@@ -161,6 +166,12 @@
         <label>Seconds between chats<input id="sBetween" type="number" min="0" step="1"></label>
       </div>
       <label class="check"><input id="sAwake" type="checkbox"> Keep the PC awake while it runs <span class="hint">(no sleep, screen stays on; back to normal when done)</span></label>
+      <div class="hidopts">
+        <div class="hint">If Business Suite is hidden (another tab, minimized, or behind another window):</div>
+        <label class="check"><input id="hFront" type="checkbox"> Bring Business Suite to the front when I press Start or Scroll</label>
+        <label class="check"><input id="hHelp" type="checkbox"> While it waits, show why, with “Show Business Suite” and “Stop” buttons, and continue the moment it's visible</label>
+        <label class="check"><input id="hLauncher" type="checkbox"> Tell me when Chrome wasn't opened with the FollowUp Chrome icon</label>
+      </div>
       <label class="check test"><input id="sTest" type="checkbox"> Test mode: fill the message box, but never press Send or Done</label>
       <button class="small reset" data-reset="start">Reset this section</button>
     </div>
@@ -293,6 +304,11 @@
   <div id="scrollBar" class="scrollbar" hidden>
     <span id="scrollMsg">Scrolling…</span>
     <button id="tLoadStop" class="small danger">Stop scrolling</button>
+  </div>
+  <div id="hiddenScroll" class="hiddenbox" hidden>
+    <div class="hbWhy"></div>
+    <div class="hbLaunch" hidden>Chrome wasn't opened with the <b>FollowUp Chrome</b> icon, so a window that's covered counts as hidden. To fix: close all Chrome windows (also Chrome in the taskbar tray), then open Chrome with the FollowUp Chrome icon on your desktop.</div>
+    <div class="hbBtns"><button class="small primary hbShow">Show Business Suite</button><button class="small danger hbStop">Stop</button></div>
   </div>
   <pre id="toolOut" class="toolout" hidden></pre>
 </section>
