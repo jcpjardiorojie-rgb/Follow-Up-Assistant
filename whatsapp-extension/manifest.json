@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FollowUp for WhatsApp by Rojie Jardio",
   "description": "FollowUp Copilot for WhatsApp Web: sends your follow-up message with the person's first name (and your image) to your existing WhatsApp chats, one by one.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "permissions": ["storage", "unlimitedStorage", "sidePanel", "scripting", "nativeMessaging", "notifications", "power"],
   "host_permissions": ["https://web.whatsapp.com/*", "https://ntfy.sh/*"],
   "background": { "service_worker": "background.js" },

@@ -79,7 +79,8 @@
   function last(c) { return c.msgs[c.msgs.length - 1] || { me: false, text: "" }; }
   function renderList() {
     const grid = $("#grid"), pane = $("#pane-side");
-    const list = byTs();
+    // flags.lazy: only the first chats are loaded; more load when you reach the bottom (like a slow WhatsApp)
+    const list = mock.flags.lazy ? byTs().slice(0, mock.loaded) : byTs();
     grid.style.height = list.length * ROW + "px";
     grid.innerHTML = "";
     const from = mock.flags.virtual ? Math.max(0, Math.floor(pane.scrollTop / ROW) - 2) : 0;
@@ -98,7 +99,19 @@
       grid.appendChild(r);
     }
   }
-  $("#pane-side").addEventListener("scroll", () => { if (mock.flags.virtual) renderList(); });
+  mock.loaded = 20;
+  $("#pane-side").addEventListener("scroll", () => {
+    if (mock.flags.virtual) renderList();
+    if (!mock.flags.lazy) return;
+    const p = $("#pane-side");
+    // flags.pauseAfter / pauseMs: after this many chats, loading pauses for a while
+    if (mock.flags.pauseAfter && mock.loaded >= mock.flags.pauseAfter && !mock.pauseUntil) mock.pauseUntil = Date.now() + (mock.flags.pauseMs || 8000);
+    if (mock.pauseUntil && Date.now() < mock.pauseUntil) return;
+    if (p.scrollTop + p.clientHeight >= p.scrollHeight - 5 && mock.loaded < convs.length && !mock.loading) {
+      mock.loading = true;
+      setTimeout(() => { mock.loaded += 8; mock.loading = false; renderList(); }, 400);
+    }
+  });
   $("#grid").addEventListener("click", (e) => {
     const r = e.target.closest("[role=listitem]");
     if (!r) return;

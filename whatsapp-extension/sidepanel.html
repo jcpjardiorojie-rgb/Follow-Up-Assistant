@@ -35,7 +35,8 @@
     <div class="row" style="justify-content:space-between"><span id="todayText">Today: 0 of 50 sent</span><span id="dayText" class="hint"></span></div>
     <div class="bar"><i id="todayBar"></i></div>
   </div>
-  <div class="row"><button id="openWa" class="small">Open WhatsApp Web</button><button id="check" class="small">Check page</button></div>
+  <div class="row"><button id="scroll" class="small">Scroll chat list to the bottom</button><button id="openWa" class="small">Open WhatsApp Web</button><button id="check" class="small">Check page</button></div>
+  <div id="scrollBar" class="hiddenbox" hidden><span id="scrollMsg">Scrolling…</span><div class="row"><button id="scrollStop" class="small danger">Stop scrolling</button></div></div>
   <pre id="checkOut" class="out" hidden></pre>
 </section>
 
@@ -93,7 +94,8 @@
     <h3>1 · Which chats, in what order</h3>
     <label>Start from<select id="sOrder">
       <option value="top">Top (newest chats first)</option>
-      <option value="bottom">Bottom (oldest chats first, then going up)</option>
+      <option value="bottom">Bottom: scroll all the way down (oldest chats first), then go up</option>
+      <option value="bottomFar">Bottom: scroll down as far as “How far” says (Settings → 7), then go up</option>
     </select></label>
     <label class="check"><input id="sLastMine" type="checkbox"> Only chats where my message is the last one <span class="hint">(skip people who wrote last: they need a real answer)</span></label>
     <label class="check"><input id="sGroups" type="checkbox"> Skip group chats</label>
@@ -160,6 +162,17 @@
     <h3>6 · Campaign</h3>
     <div class="hint">FollowUp remembers who already got the message, so nobody gets it twice. Start a new campaign to follow up everyone again (for example with a new promo).</div>
     <div class="row"><button id="newCampaign" class="small danger">New campaign</button><span id="campaignInfo" class="hint"></span></div>
+  </div>
+  <div class="sec">
+    <h3>7 · Scrolling (How far)</h3>
+    <label class="check"><input type="radio" name="scrollHow" value="all"> How far: all the way to the bottom</label>
+    <label class="check"><input type="radio" name="scrollHow" value="count"> How far: this many scrolls</label>
+    <label>Number of scrolls<input id="scCount" type="number" min="1"></label>
+    <div class="grid2">
+      <label>Wait after each scroll (sec)<input id="scWait" type="number" min="0.3" step="0.1"></label>
+      <label>Before deciding it's the bottom, keep trying (sec)<input id="scPatience" type="number" min="0"></label>
+    </div>
+    <div class="hint">“How far” is used by the “Scroll chat list to the bottom” button and by Start from “as far as How far says”. When no more chats load, FollowUp nudges the list every 10 s for the time above before calling it the bottom.</div>
   </div>
 </section>
 

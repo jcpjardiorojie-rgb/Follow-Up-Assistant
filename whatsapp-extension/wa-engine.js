@@ -10,7 +10,12 @@
     useTildeName: false, // an unsaved number that shows "~Mark D" gets "Hi Mark!"
     imageStyle: "one", // "one": image with the text under it (one bubble) · "two": text, then the image
     imageRequired: true, // don't send if the image doesn't attach
-    order: "top", // "top": newest first · "bottom": oldest first (scrolls down, then goes up)
+    order: "top", // "top": newest first · "bottom": oldest first (scrolls all the way down, then goes up)
+    //                "bottomFar": scrolls down as far as "How far" says, then goes up
+    scrollHow: "all", // How far: "all" (all the way) or "count" (a number of scrolls)
+    scrollCount: 25,
+    scrollWaitSec: 1.5, // wait after each scroll for more chats to load
+    bottomWaitSec: 60, // when no more chats load, keep trying this long before calling it the bottom
     limitMode: "ramp", // "ramp": grows by itself · "fixed": the same number every day
     ramp: [50, 80, 120, 160, 200], // days 1–3, 4–6, week 2, week 3, after
     dailyCap: 100, // used when limitMode is "fixed"
@@ -486,6 +491,82 @@
     }
   }
 
+  // ---------- scrolling the chat list down ----------
+  // Used by the "Scroll chat list to the bottom" button and by Start from Bottom.
+  // ctl: { gate(): waits while paused/hidden and throws to stop; wait(ms); report(message, scrolls) }
+  async function scrollDown(cfg, ctl, allTheWay) {
+    const goal = !allTheWay && cfg.scrollHow === "count" ? Math.max(1, Math.round(+cfg.scrollCount || 1)) : Infinity;
+    const pause = Math.max(0.3, cfg.scrollWaitSec == null ? 1.5 : +cfg.scrollWaitSec) * 1000;
+    let list = findList(), scrolls = 0, still = 0;
+    if (!list) return { ok: false, reachedEnd: false, scrolls, message: "Can't find your chat list. Open WhatsApp Web and wait until your chats show." };
+    const chats = () => getRows(list).length;
+    for (;;) {
+      await ctl.gate();
+      if (scrolls >= goal) return { ok: true, reachedEnd: false, scrolls, message: `Scrolled ${scrolls} times` };
+      list = findList() || list;
+      const h = list.scrollHeight;
+      list.scrollTop = list.scrollHeight;
+      scrolls++;
+      const grew = await waitFor(() => list.scrollHeight > h + 5, pause, 200);
+      ctl.report(`Scrolling the chat list down… ${goal === Infinity ? scrolls + " scrolls" : scrolls + " of " + goal + " scrolls"}`, scrolls);
+      if (grew) { still = 0; continue; }
+      if (++still < 2) continue;
+      // No more chats loaded. WhatsApp sometimes pauses loading: keep nudging the list for a while first.
+      const end = Date.now() + Math.max(0, +cfg.bottomWaitSec || 0) * 1000;
+      let more = false;
+      while (!more && Date.now() < end) {
+        ctl.report(`The chat list stopped loading. Making sure it's the bottom… ${Math.ceil((end - Date.now()) / 1000)} s`, scrolls);
+        await ctl.wait(Math.min(10000, end - Date.now()));
+        list = findList() || list;
+        list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight - 400);
+        await sleep(400);
+        const h2 = list.scrollHeight;
+        list.scrollTop = list.scrollHeight;
+        more = await waitFor(() => list.scrollHeight > h2 + 5, 2500, 200);
+      }
+      if (more) { still = 0; continue; }
+      return { ok: true, reachedEnd: true, scrolls, message: `Reached the bottom of your chats (${scrolls} scrolls)` };
+    }
+  }
+
+  // The button's own job: it can be paused, resumed and stopped; progress goes to onProgress.
+  const scrollJob = { state: "idle", paused: false, cancel: false };
+  async function scrollButton(cfg, onProgress) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    if (scrollJob.state !== "idle") return { ok: false, message: "Already scrolling." };
+    if (current && (current.state === "running" || current.state === "paused")) return { ok: false, message: "A run is going. Stop it first, then scroll." };
+    Object.assign(scrollJob, { state: "running", paused: false, cancel: false });
+    let msg = "Scrolling the chat list down…", n = 0;
+    const tellP = (state) => { scrollJob.state = state; if (onProgress) try { onProgress({ state, message: msg, scrolls: n }); } catch (_) {} };
+    const CANCEL = Symbol("cancel");
+    const ctl = {
+      async gate() {
+        if (scrollJob.paused && !scrollJob.cancel) {
+          const was = msg; msg = `Scrolling paused (${n} scrolls)`; tellP("paused");
+          while (scrollJob.paused && !scrollJob.cancel) await sleep(200);
+          msg = was; if (!scrollJob.cancel) tellP("running");
+        }
+        if (cfg.waitWhenHidden !== false && document.hidden && !scrollJob.cancel) {
+          msg = "Waiting: WhatsApp Web is hidden. It continues the moment it's visible."; tellP("running");
+          while (document.hidden && !scrollJob.cancel) await sleepOrVisible(1000);
+        }
+        if (scrollJob.cancel) throw CANCEL;
+      },
+      async wait(ms) { const end = Date.now() + ms; while (Date.now() < end) { await ctl.gate(); await sleep(Math.min(250, end - Date.now())); } },
+      report(m, s) { msg = m; n = s; if (!scrollJob.paused) tellP("running"); },
+    };
+    tellP("running");
+    let res;
+    try { res = await scrollDown(cfg, ctl, false); }
+    catch (e) { res = e === CANCEL ? { ok: true, reachedEnd: false, scrolls: n, message: "Scrolling stopped" } : { ok: false, reachedEnd: false, scrolls: n, message: "Error: " + (e && e.message ? e.message : e) }; }
+    scrollJob.state = "idle";
+    if (onProgress) try { onProgress(Object.assign({ state: "done" }, res)); } catch (_) {}
+    return res;
+  }
+  function pauseScroll() { if (scrollJob.state === "running") { scrollJob.paused = true; return true; } return false; }
+  function resumeScroll() { if (scrollJob.paused) { scrollJob.paused = false; return true; } return false; }
+  function stopScroll() { if (scrollJob.state !== "idle") { scrollJob.cancel = true; scrollJob.paused = false; return true; } return false; }
+
   // ---------- the run ----------
   const STOP = Symbol("stop");
   let current = null;
@@ -527,17 +608,15 @@
           await this.gate();
           list = findList();
         }
-        const bottomFirst = cfg.order === "bottom";
+        const bottomFirst = cfg.order === "bottom" || cfg.order === "bottomFar";
         if (bottomFirst) {
           this.setState("running", "Scrolling down to your oldest chats…");
-          let same = 0, last = -1;
-          while (same < 3) {
-            await this.gate();
-            list.scrollTop = list.scrollHeight;
-            await sleep(700);
-            if (list.scrollHeight === last) same++; else { same = 0; last = list.scrollHeight; }
-          }
-          this.setState("running", "Reached the bottom of your chats. Sending from the bottom up.");
+          const r = await scrollDown(cfg, {
+            gate: () => this.gate(),
+            wait: (ms) => this.wait(ms),
+            report: (m) => { if (this.state === "running") this.hooks.state({ state: "running", reason: m, code: "scroll" }); },
+          }, cfg.order === "bottom");
+          this.setState("running", (r.reachedEnd ? "Reached the bottom of your chats" : `Scrolled ${r.scrolls} times (as far as “How far” says)`) + ". Sending from the bottom up.");
         }
         const visited = new Set();
         let failures = 0, sent = 0, stuck = 0;
@@ -594,6 +673,7 @@
 
   function start(cfg, hooks) {
     if (current && (current.state === "running" || current.state === "paused")) throw new Error("Already running");
+    if (scrollJob.state !== "idle") throw new Error("The chat list is still scrolling. Stop the scrolling first, then press Start.");
     current = new Runner(cfg, hooks);
     current.done = current.run();
     return current;
@@ -626,6 +706,6 @@
     pause: (r) => current && current.pause(r),
     resume: () => current && current.resume(),
     stop: () => current && current.stop(),
-    tools: { diagnose, greetName, render, isPhone, getRows: () => { const l = findList(); return l ? getRows(l) : []; } },
+    tools: { diagnose, scrollButton, pauseScroll, resumeScroll, stopScroll, scrollState: () => scrollJob.state, greetName, render, isPhone, getRows: () => { const l = findList(); return l ? getRows(l) : []; } },
   };
 })();

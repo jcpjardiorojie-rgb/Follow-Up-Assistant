@@ -117,6 +117,7 @@
   }
 
   async function start() {
+    if (E.tools.scrollState() !== "idle") return { ok: false, message: "The chat list is still scrolling. Stop the scrolling first, then press Start." };
     data = await load();
     const t = data.tpl;
     if (!t.text || !t.text.trim()) return { ok: false, message: "Write your follow-up message first." };
@@ -132,7 +133,7 @@
     try {
       E.start(cfg, hooks(new Set(data.campaign.doneKeys)));
       const s = data.settings;
-      event("RUN", `Started · “${t.name}” · ${s.order === "bottom" ? "oldest first" : "newest first"} · today ${lim.sent}/${lim.limit} (day ${lim.day}${lim.own ? ", your own number today" : ""}) · gap ${s.gapMinSec}–${s.gapMaxSec} s · image ${t.imageDataUrl ? (s.imageStyle === "one" ? "one bubble" : "two bubbles") : "none"} · unsaved: “${s.unsavedWord}”${s.useTildeName ? " (~name on)" : ""}${s.testMode ? " · TEST MODE" : ""} · version ${chrome.runtime.getManifest().version}`);
+      event("RUN", `Started · “${t.name}” · ${s.order === "bottom" ? "oldest first (all the way)" : s.order === "bottomFar" ? `oldest first (${s.scrollHow === "count" ? s.scrollCount + " scrolls" : "all the way"})` : "newest first"} · today ${lim.sent}/${lim.limit} (day ${lim.day}${lim.own ? ", your own number today" : ""}) · gap ${s.gapMinSec}–${s.gapMaxSec} s · image ${t.imageDataUrl ? (s.imageStyle === "one" ? "one bubble" : "two bubbles") : "none"} · unsaved: “${s.unsavedWord}”${s.useTildeName ? " (~name on)" : ""}${s.testMode ? " · TEST MODE" : ""} · version ${chrome.runtime.getManifest().version}`);
       keepAwake(true);
       return { ok: true };
     } catch (e) { return { ok: false, message: e.message }; }
@@ -236,12 +237,23 @@
       switch (msg.cmd) {
         case "ping": {
           const d = data && ["running", "paused"].includes(E.status()) ? data : await load();
-          return { ok: true, state: E.status(), last: lastState, stats: d.stats, limit: limitInfo(d) };
+          return { ok: true, state: E.status(), last: lastState, stats: d.stats, limit: limitInfo(d), scroll: E.tools.scrollState() };
         }
         case "start": return start();
         case "pause": E.pause(); return { ok: true };
         case "resume": E.resume(); return { ok: true };
         case "stop": E.stop(); return { ok: true };
+        case "scrollList": {
+          const s = (await load()).settings;
+          if (["running", "paused"].includes(E.status())) return { ok: false, message: "A run is going. Stop it first, then scroll." };
+          if (E.tools.scrollState() !== "idle") return { ok: false, message: "Already scrolling." };
+          awake = false; data = data || (await load()); keepAwake(true);
+          E.tools.scrollButton(s, (p) => { tell({ scroll: p }); if (p.state === "done") keepAwake(false); });
+          return { ok: true, message: "Scrolling the chat list down…" };
+        }
+        case "pauseScroll": return { ok: E.tools.pauseScroll() };
+        case "resumeScroll": return { ok: E.tools.resumeScroll() };
+        case "stopScroll": return { ok: E.tools.stopScroll() };
         case "diagnose": return { ok: true, report: E.tools.diagnose((await load()).settings) };
         case "limit": return { ok: true, limit: limitInfo(await load()) };
         case "testNotify": data = data || (await load()); data.settings = Object.assign({}, E.DEFAULTS, msg.settings || data.settings); return notify("FollowUp test", "Notifications work. You'll get one like this when a run finishes.");

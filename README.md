@@ -63,6 +63,16 @@ Safety rules built into both versions:
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
    by mistake. The badge at the top says **Ready** when it's connected.
 
+## FollowUp for WhatsApp 1.1: scrolling
+
+* **"Scroll chat list to the bottom"** button (top of the panel), with Pause / Resume and **Stop scrolling**.
+* **Settings → 7 · Scrolling (How far)**: all the way to the bottom, or a number of scrolls; wait after each scroll;
+  and **"Before deciding it's the bottom, keep trying"** (60 s): when no more chats load, it nudges the list every 10 s first.
+* **Start from** now has two Bottom choices: scroll **all the way** down, or **as far as "How far" says**, then go up.
+
+![Scroll button](docs/screenshots/wa-scroll-button.png)
+![Scrolling settings](docs/screenshots/wa-settings-scrolling.png)
+
 ## NEW: FollowUp for WhatsApp 1.0 (separate extension, folder `whatsapp-extension`)
 
 Follows up your **existing WhatsApp chats** on WhatsApp Web, one by one, like FollowUp Copilot does on Business Suite.

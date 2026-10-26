@@ -8,7 +8,7 @@ let settings = {}, templates = [], active = "t1", state = "idle", lastStats = nu
 // ---------- settings form ----------
 const CHECKS = { sLastMine: "onlyIfLastFromMe", sGroups: "skipGroups", sTilde: "useTildeName", sImgReq: "imageRequired", sFront: "frontOnStart",
   sAwake: "keepAwake", sTest: "testMode", sFinEnd: "finishOnEnd", sFinDaily: "finishOnDaily", sPC: "notifyPC", sPhone: "notifyPhone" };
-const NUMS = { sCap: "dailyCap", sGapMin: "gapMinSec", sGapMax: "gapMaxSec", sCountdown: "finishCountdownSec" };
+const NUMS = { sCap: "dailyCap", sGapMin: "gapMinSec", sGapMax: "gapMaxSec", sCountdown: "finishCountdownSec", scCount: "scrollCount", scPatience: "bottomWaitSec" };
 const SELECTS = { sOrder: "order", sImgStyle: "imageStyle", sFinish: "whenFinished" };
 
 function fillForm() {
@@ -16,6 +16,8 @@ function fillForm() {
   for (const [id, k] of Object.entries(NUMS)) $(id).value = settings[k];
   for (const [id, k] of Object.entries(SELECTS)) $(id).value = settings[k];
   $("sStep").value = (settings.stepDelayMs / 1000).toFixed(1);
+  $("scWait").value = settings.scrollWaitSec;
+  for (const r of document.querySelectorAll("input[name=scrollHow]")) r.checked = r.value === settings.scrollHow;
   $("sWord").value = settings.unsavedWord;
   $("sTopic").value = settings.ntfyTopic || "";
   settings.ramp.forEach((n, i) => { $("r" + i).value = n; });
@@ -30,6 +32,10 @@ function readForm() {
   settings.finishCountdownSec = Math.max(10, settings.finishCountdownSec || 60);
   if (settings.gapMaxSec < settings.gapMinSec) settings.gapMaxSec = settings.gapMinSec;
   settings.stepDelayMs = Math.round(Math.max(0.3, +$("sStep").value || 1.2) * 1000);
+  settings.scrollWaitSec = Math.max(0.3, +$("scWait").value || 1.5);
+  settings.scrollCount = Math.max(1, settings.scrollCount || 1);
+  const sh = document.querySelector("input[name=scrollHow]:checked");
+  settings.scrollHow = sh ? sh.value : "all";
   settings.unsavedWord = $("sWord").value.trim() || D.unsavedWord;
   settings.ntfyTopic = $("sTopic").value.trim();
   settings.ramp = [0, 1, 2, 3, 4].map((i) => Math.max(1, Math.round(+$("r" + i).value || D.ramp[i])));
@@ -210,6 +216,24 @@ $("hStop").addEventListener("click", () => send("stop"));
 $("openWa").addEventListener("click", () => openWhatsApp());
 $("hShow").addEventListener("click", async () => { const r = await hiddenReason(); if (r) showWaTab(r.tab); });
 $("finishCancel").addEventListener("click", () => send("cancelFinish"));
+// "Scroll chat list to the bottom": Scroll → Pause → Resume, with its own Stop.
+let scrollState = "idle";
+function showScroll(p) {
+  scrollState = p.state === "done" ? "idle" : p.state;
+  const active = scrollState === "running" || scrollState === "paused";
+  $("scroll").textContent = scrollState === "running" ? "Pause scrolling" : scrollState === "paused" ? "Resume scrolling" : "Scroll chat list to the bottom";
+  $("scroll").classList.toggle("primary", active);
+  $("scrollBar").hidden = !active;
+  if (p.message) $("scrollMsg").textContent = p.message;
+  if (p.state === "done") { $("checkOut").hidden = false; $("checkOut").textContent = p.message; }
+  $("start").disabled = active || state === "running" || state === "paused";
+}
+$("scroll").addEventListener("click", async () => {
+  const cmd = scrollState === "running" ? "pauseScroll" : scrollState === "paused" ? "resumeScroll" : "scrollList";
+  const r = await send(cmd);
+  if (cmd === "scrollList" && !r.ok) { $("checkOut").hidden = false; $("checkOut").textContent = r.message; }
+});
+$("scrollStop").addEventListener("click", () => send("stopScroll"));
 $("check").addEventListener("click", async () => {
   const out = $("checkOut"); out.hidden = false; out.textContent = "Checking…";
   const r = await send("diagnose");
@@ -248,6 +272,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     showHidden(msg.state.state === "running" && msg.state.code === "hidden");
   }
   if (msg.limit) showToday(msg.limit);
+  if (msg.scroll) showScroll(msg.scroll);
   if (msg.entry) {
     if (!$("tab-activity").hidden) $("log").prepend(item(msg.entry));
     if (["FAILED", "REVIEW", "UNKNOWN"].includes(msg.entry.status)) showProblems();
@@ -295,5 +320,6 @@ function watch() {
     setState(r.state, r.state !== "idle" && r.last ? r.last.reason : "Connected. Write your message, then press Start.");
     if (r.limit) showToday(r.limit);
     if (r.last && r.last.code === "hidden") showHidden(true);
+    if (r.scroll && r.scroll !== "idle") showScroll({ state: r.scroll, message: "Scrolling the chat list down…" });
   } else { setState("offline", r.message); watch(); }
 })();

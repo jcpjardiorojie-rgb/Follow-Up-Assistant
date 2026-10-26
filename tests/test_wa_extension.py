@@ -32,7 +32,7 @@ def wa_ext(pw):
         panel.wait_for_selector("#where:has-text('Connected')")
         # quick tests: no long waits between chats
         panel.evaluate("""async () => { const { settings = {} } = await chrome.storage.local.get('settings');
-          await chrome.storage.local.set({ settings: Object.assign({}, WAEngine.DEFAULTS, settings, { gapMinSec: 0, gapMaxSec: 0, stepDelayMs: 300 }) }); }""")
+          await chrome.storage.local.set({ settings: Object.assign({}, WAEngine.DEFAULTS, settings, { gapMinSec: 0, gapMaxSec: 0, stepDelayMs: 300, bottomWaitSec: 0, scrollWaitSec: 0.6 }) }); }""")
         panel.reload()
         panel.wait_for_selector("#where:has-text('Connected')")
         yield wa, panel
@@ -169,3 +169,35 @@ def test_bring_to_front_on_start(wa_ext):
     panel.click("#start")
     panel.wait_for_function(WA_ACTIVE, timeout=5000)
     panel.click("#stop")
+
+
+def test_scroll_button_how_far_pause_resume_stop(wa_ext):
+    wa, panel = wa_ext
+    wa.goto(WA_URL + "?extra=60")
+    wa.wait_for_function("window.__mock && document.querySelectorAll('[role=listitem]').length > 5")
+    wa.evaluate("__mock.flags.lazy = true")
+    panel.reload(); panel.wait_for_selector("#where:has-text('Connected')")
+    # How far: 3 scrolls
+    tab(panel, "settings")
+    panel.check("input[name=scrollHow][value=count]"); panel.dispatch_event("input[name=scrollHow][value=count]", "change")
+    set_val(panel, "#scCount", 3)
+    panel.click("#scroll")
+    panel.wait_for_selector("#checkOut:has-text('Scrolled 3 times')", timeout=30000)
+    assert panel.text_content("#scroll") == "Scroll chat list to the bottom"
+    # All the way, with Pause / Resume / Stop
+    panel.check("input[name=scrollHow][value=all]"); panel.dispatch_event("input[name=scrollHow][value=all]", "change")
+    set_val(panel, "#scWait", 1.5)
+    panel.click("#scroll")
+    panel.wait_for_selector("#scroll:has-text('Pause scrolling')")
+    assert panel.is_disabled("#start")
+    panel.click("#scroll")
+    panel.wait_for_selector("#scroll:has-text('Resume scrolling')")
+    panel.click("#scroll")
+    panel.wait_for_selector("#scroll:has-text('Pause scrolling')")
+    panel.click("#scrollStop")
+    panel.wait_for_selector("#checkOut:has-text('Scrolling stopped')", timeout=15000)
+    assert panel.is_hidden("#scrollBar") and panel.is_enabled("#start")
+    # All the way to the end
+    panel.click("#scroll")
+    panel.wait_for_selector("#checkOut:has-text('Reached the bottom of your chats')", timeout=60000)
+    assert wa.evaluate("__mock.loaded") >= 78

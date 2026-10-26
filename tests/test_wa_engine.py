@@ -27,7 +27,7 @@ START = """async (cfg) => {
   if (state !== "finished" && state !== "stopped") { r.stop(); await r.done; }
   return { state, states: t.states, log: t.log, sent: t.sent };
 }"""
-FAST = {"stepDelayMs": 150, "gapMinSec": 0, "gapMaxSec": 0, "pageTimeoutMs": 3000}
+FAST = {"stepDelayMs": 150, "gapMinSec": 0, "gapMaxSec": 0, "pageTimeoutMs": 3000, "bottomWaitSec": 0, "scrollWaitSec": 0.6}
 
 
 def serve_wa(target):
@@ -199,3 +199,70 @@ def test_check_page(wa):
     wa.wait_for_selector("#main footer .box")
     d = wa.evaluate("WAEngine.tools.diagnose({})")
     assert d["openChat"] == "Joy Santos" and d["messageBox"] and d["attach"]
+
+
+SCROLL = """async (cfg) => {
+  const p = [];
+  const r = await WAEngine.tools.scrollButton(cfg, (x) => p.push(x));
+  return Object.assign(r, { progress: p, loaded: __mock.loaded });
+}"""
+
+
+def test_scroll_button_all_the_way_on_a_lazy_list(wa):
+    wa.goto(WA_URL + "?extra=60")
+    wa.evaluate(WA_JS)
+    wa.evaluate("__mock.flags.lazy = true")
+    r = wa.evaluate(SCROLL, {"bottomWaitSec": 0, "scrollWaitSec": 0.6})
+    assert r["reachedEnd"] and r["loaded"] >= 78
+    assert r["progress"][-1]["state"] == "done"
+
+
+def test_scroll_button_how_far_count(wa):
+    wa.goto(WA_URL + "?extra=60")
+    wa.evaluate(WA_JS)
+    wa.evaluate("__mock.flags.lazy = true")
+    r = wa.evaluate(SCROLL, {"scrollHow": "count", "scrollCount": 3, "bottomWaitSec": 0, "scrollWaitSec": 0.6})
+    assert not r["reachedEnd"] and r["scrolls"] == 3 and r["message"] == "Scrolled 3 times"
+    assert 20 < r["loaded"] < 78
+
+
+def test_keeps_trying_through_a_pause_in_loading(wa):
+    wa.goto(WA_URL + "?extra=60")
+    wa.evaluate(WA_JS)
+    wa.evaluate("__mock.flags.lazy = true; __mock.flags.pauseAfter = 36; __mock.flags.pauseMs = 12000")
+    quick = wa.evaluate(SCROLL, {"bottomWaitSec": 0, "scrollWaitSec": 0.6})
+    assert quick["reachedEnd"] and quick["loaded"] < 78  # without the wait it stops at the pause
+    wa.goto(WA_URL + "?extra=60")
+    wa.evaluate(WA_JS)
+    wa.evaluate("__mock.flags.lazy = true; __mock.flags.pauseAfter = 36; __mock.flags.pauseMs = 12000")
+    patient = wa.evaluate(SCROLL, {"bottomWaitSec": 30, "scrollWaitSec": 0.6})
+    assert patient["reachedEnd"] and patient["loaded"] >= 78
+    assert any("Making sure it's the bottom" in p["message"] for p in patient["progress"])
+
+
+def test_scroll_button_pause_resume_stop(wa):
+    wa.goto(WA_URL + "?extra=60")
+    wa.evaluate(WA_JS)
+    wa.evaluate("__mock.flags.lazy = true")
+    wa.evaluate("() => { window.__sp = []; window.__sr = WAEngine.tools.scrollButton({ bottomWaitSec: 0, scrollWaitSec: 1 }, (x) => __sp.push(x)); }")
+    wa.wait_for_function("__sp.length >= 2")
+    assert wa.evaluate("WAEngine.tools.pauseScroll()")
+    wa.wait_for_function("WAEngine.tools.scrollState() === 'paused'")
+    n = wa.evaluate("__mock.loaded"); wa.wait_for_timeout(2500)
+    assert wa.evaluate("__mock.loaded") == n
+    assert wa.evaluate("WAEngine.tools.resumeScroll()")
+    wa.wait_for_function("WAEngine.tools.scrollState() === 'running'")
+    assert wa.evaluate("WAEngine.tools.stopScroll()")
+    r = wa.evaluate("__sr")
+    assert r["message"] == "Scrolling stopped" and not r["reachedEnd"]
+
+
+def test_start_from_bottom_far_uses_how_far(wa):
+    wa.goto(WA_URL + "?extra=60")
+    wa.evaluate(WA_JS)
+    wa.evaluate("__mock.flags.lazy = true")
+    res = run(wa, order="bottomFar", scrollHow="count", scrollCount=1, capLeft=2, maxWaitMs=60000)
+    names = [x["name"] for x in sent(wa)]
+    assert any("as far as" in (s.get("reason") or "") for s in res["states"])
+    # one scroll loaded 8 more (28 chats): the 28th is "Lead Number 10", so it starts there
+    assert names[0] == "Lead Number 10" and len(names) == 2
