@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FollowUp for WhatsApp</title>
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>FollowUp for WhatsApp <span class="sub">by Rojie Jardio</span></h1>
+    <div id="where" class="sub">Looking for WhatsApp Web…</div>
+  </div>
+  <div class="topright">
+    <span id="ver" class="ver"></span>
+    <span id="pill" class="pill">Ready</span>
+  </div>
+</header>
+
+<section class="card run">
+  <div id="reason" class="reason">Open WhatsApp Web, then press Start.</div>
+  <div id="current" class="current"></div>
+  <div id="hiddenBox" class="hiddenbox" hidden>
+    <div id="hiddenWhy"></div>
+    <div class="row"><button id="hShow" class="small primary">Show WhatsApp Web</button><button id="hStop" class="small danger">Stop</button></div>
+  </div>
+  <div id="finishBar" class="finishbar" hidden><span id="finishText"></span><button id="finishCancel" class="small primary">Cancel</button></div>
+  <div class="controls">
+    <button id="start" class="primary">Start</button>
+    <button id="pause" disabled>Pause</button>
+    <button id="stop" class="danger" disabled>Stop</button>
+  </div>
+  <div class="today">
+    <div class="row" style="justify-content:space-between"><span id="todayText">Today: 0 of 50 sent</span><span id="dayText" class="hint"></span></div>
+    <div class="bar"><i id="todayBar"></i></div>
+  </div>
+  <div class="row"><button id="openWa" class="small">Open WhatsApp Web</button><button id="check" class="small">Check page</button></div>
+  <pre id="checkOut" class="out" hidden></pre>
+</section>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="main" aria-selected="true">Message</button>
+  <button role="tab" data-tab="activity" aria-selected="false">Activity</button>
+  <button role="tab" data-tab="problems" aria-selected="false">Problems<span id="probCount" class="count" hidden></span></button>
+  <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
+</nav>
+
+<!-- Message -->
+<section id="tab-main" class="card">
+  <div class="row">
+    <label style="flex:1">Saved messages<select id="tplSelect"></select></label>
+    <button id="tplNew" class="small">New</button>
+    <button id="tplRename" class="small">Rename</button>
+    <button id="tplDelete" class="small danger">Delete</button>
+  </div>
+  <label>Your follow-up message
+    <textarea id="text" rows="6"></textarea>
+  </label>
+  <div class="hint">Write <b>{first_name}</b> where the name goes. Saved contacts get their first name. Numbers only (not saved) get your word from Settings → 2.</div>
+  <div class="image">
+    <div id="thumb" class="thumb">No image</div>
+    <div style="display:grid;gap:4px">
+      <label class="filebtn">Choose image<input id="imgFile" type="file" accept="image/*"></label>
+      <button id="imgRemove" class="small" hidden>Remove image</button>
+      <span id="imgName" class="hint"></span>
+    </div>
+  </div>
+  <div class="preview">
+    <div class="label">How it looks (saved contact)</div>
+    <div id="pv1" class="bubble"></div>
+    <div class="label">How it looks (number only, not saved)</div>
+    <div id="pv2" class="bubble"></div>
+  </div>
+</section>
+
+<!-- Activity -->
+<section id="tab-activity" class="card" hidden>
+  <div class="row" style="justify-content:space-between"><h2>Activity</h2><div class="row"><button id="copyClaude" class="small primary">Copy for Claude</button><button id="logClear" class="small">Clear</button></div></div>
+  <div id="copied" class="hint" hidden>Copied. Paste it in your message to Claude.</div>
+  <ol id="log" class="log"></ol>
+</section>
+
+<!-- Problems -->
+<section id="tab-problems" class="card" hidden>
+  <div class="row" style="justify-content:space-between"><h2>Problems</h2><button id="probClear" class="small">Clear</button></div>
+  <ol id="problems" class="log"></ol>
+</section>
+
+<!-- Settings -->
+<section id="tab-settings" class="card" hidden>
+  <div class="sec">
+    <h3>1 · Which chats, in what order</h3>
+    <label>Start from<select id="sOrder">
+      <option value="top">Top (newest chats first)</option>
+      <option value="bottom">Bottom (oldest chats first, then going up)</option>
+    </select></label>
+    <label class="check"><input id="sLastMine" type="checkbox"> Only chats where my message is the last one <span class="hint">(skip people who wrote last: they need a real answer)</span></label>
+    <label class="check"><input id="sGroups" type="checkbox"> Skip group chats</label>
+  </div>
+
+  <div class="sec">
+    <h3>2 · Names</h3>
+    <label>Word for numbers only (not saved in your phone)<input id="sWord" type="text" placeholder="po"></label>
+    <div class="hint">“Hi {first_name}!” becomes “Hi <span id="wordEx">po</span>!” for them, never “Hi +63917…!”.</div>
+    <label class="check"><input id="sTilde" type="checkbox"> If WhatsApp shows their own name with “~” (like ~Mark), use it: “Hi Mark!”</label>
+  </div>
+
+  <div class="sec">
+    <h3>3 · How many per day</h3>
+    <label class="check"><input type="radio" name="limitMode" value="ramp"> Grow by itself (warm-up, safest)</label>
+    <div class="grid5">
+      <label>Days 1–3<input id="r0" type="number" min="1"></label>
+      <label>Days 4–6<input id="r1" type="number" min="1"></label>
+      <label>Week 2<input id="r2" type="number" min="1"></label>
+      <label>Week 3<input id="r3" type="number" min="1"></label>
+      <label>After<input id="r4" type="number" min="1"></label>
+    </div>
+    <label class="check"><input type="radio" name="limitMode" value="fixed"> The same number every day</label>
+    <label>Every day<input id="sCap" type="number" min="1"></label>
+    <label>Today only: follow up this many <span class="hint">(empty = use the plan above)</span><input id="sToday" type="number" min="1" placeholder="use the plan"></label>
+    <div id="planNow" class="hint"></div>
+  </div>
+
+  <div class="sec">
+    <h3>4 · Sending</h3>
+    <div class="grid2">
+      <label>Wait between chats, from (sec)<input id="sGapMin" type="number" min="0"></label>
+      <label>to (sec)<input id="sGapMax" type="number" min="0"></label>
+      <label>Wait after opening a chat (sec)<input id="sStep" type="number" min="0.3" step="0.1"></label>
+    </div>
+    <label>Image and message<select id="sImgStyle">
+      <option value="one">One bubble: the image with the message under it</option>
+      <option value="two">Two bubbles: the message, then the image</option>
+    </select></label>
+    <label class="check"><input id="sImgReq" type="checkbox"> Don't send if the image fails to attach</label>
+    <label class="check"><input id="sFront" type="checkbox"> Bring WhatsApp Web to the front when I press Start</label>
+    <label class="check"><input id="sAwake" type="checkbox"> Keep the PC awake while it runs</label>
+    <label class="check"><input id="sTest" type="checkbox"> Test mode: fill in the message and image, but never press Send</label>
+  </div>
+
+  <div class="sec">
+    <h3>5 · When finished</h3>
+    <label>Then<select id="sFinish">
+      <option value="nothing">Do nothing</option>
+      <option value="closeTab">Close the WhatsApp Web tab</option>
+      <option value="closeChrome">Close Chrome</option>
+      <option value="shutdown">Shut down the computer</option>
+    </select></label>
+    <label>Countdown first (sec)<input id="sCountdown" type="number" min="10"></label>
+    <label class="check"><input id="sFinEnd" type="checkbox"> …when it ran out of chats</label>
+    <label class="check"><input id="sFinDaily" type="checkbox"> …when today's limit was reached</label>
+    <label class="check"><input id="sPC" type="checkbox"> Pop-up on this PC when it finishes or pauses</label>
+    <label class="check"><input id="sPhone" type="checkbox"> Notification on my phone (ntfy app)</label>
+    <label>ntfy topic<input id="sTopic" type="text" placeholder="e.g. rojie-followup-7342"></label>
+    <div class="row"><button id="testNotify" class="small">Send a test</button><span id="notifyOut" class="hint"></span></div>
+  </div>
+
+  <div class="sec">
+    <h3>6 · Campaign</h3>
+    <div class="hint">FollowUp remembers who already got the message, so nobody gets it twice. Start a new campaign to follow up everyone again (for example with a new promo).</div>
+    <div class="row"><button id="newCampaign" class="small danger">New campaign</button><span id="campaignInfo" class="hint"></span></div>
+  </div>
+</section>
+
+<script src="wa-engine.js"></script>
+<script src="connect.js"></script>
+<script src="sidepanel.js"></script>
+</body>
+</html>

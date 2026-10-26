@@ -1,0 +1,219 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>WhatsApp</title>
+<style>
+  body { margin: 0; font: 14px "Segoe UI", sans-serif; background: #eae6df; }
+  #app { display: flex; height: 100vh; }
+  #side { width: 420px; display: flex; flex-direction: column; background: #fff; border-right: 1px solid #ddd; }
+  #search { margin: 8px; padding: 6px 10px; background: #f0f2f5; border-radius: 8px; min-height: 18px; }
+  #pane-side { flex: 1; overflow-y: auto; position: relative; }
+  #grid { position: relative; }
+  [role=listitem] { position: absolute; left: 0; right: 0; height: 72px; }
+  .cell { display: flex; gap: 12px; align-items: center; padding: 0 14px; height: 72px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+  .av { width: 48px; height: 48px; border-radius: 50%; background: #cfd8dc; flex: none; display: grid; place-items: center; }
+  .meta { flex: 1; min-width: 0; }
+  .top { display: flex; justify-content: space-between; }
+  .name { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .time { color: #667781; font-size: 12px; }
+  .prev { color: #667781; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 3px; }
+  #mainwrap { flex: 1; display: flex; }
+  #main { flex: 1; display: flex; flex-direction: column; }
+  #main header { display: flex; gap: 10px; align-items: center; height: 60px; padding: 0 16px; background: #f0f2f5; }
+  .sub { color: #667781; font-size: 13px; }
+  .msgs { flex: 1; overflow-y: auto; padding: 16px 60px; display: flex; flex-direction: column; gap: 6px; }
+  .message-out, .message-in { max-width: 60%; padding: 6px 8px; border-radius: 8px; }
+  .message-out { align-self: flex-end; background: #d9fdd3; }
+  .message-in { align-self: flex-start; background: #fff; }
+  .message-out img { display: block; width: 120px; height: 90px; object-fit: cover; }
+  footer { background: #f0f2f5; padding: 8px 16px; display: flex; gap: 8px; align-items: center; min-height: 46px; }
+  .box { flex: 1; background: #fff; border-radius: 8px; padding: 9px 12px; min-height: 20px; white-space: pre-wrap; }
+  .send[hidden], .mic[hidden] { display: none; }
+  .cant { flex: 1; text-align: center; color: #667781; }
+  #menu { position: absolute; bottom: 60px; left: 440px; background: #fff; padding: 10px; border-radius: 10px; box-shadow: 0 2px 10px #0003; }
+  .media-editor { position: fixed; left: 420px; right: 0; top: 0; bottom: 0; background: #e9edef; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+  .media-editor img { width: 240px; height: 180px; object-fit: cover; }
+  .media-editor .cap { width: 60%; background: #fff; border-radius: 8px; padding: 9px 12px; min-height: 20px; white-space: pre-wrap; }
+  .dialog { position: fixed; left: 50%; top: 30%; transform: translateX(-50%); background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 20px #0005; }
+</style></head>
+<body>
+<div id="app">
+  <div id="side">
+    <div id="search" contenteditable="true" role="textbox" aria-label="Search input textbox"></div>
+    <div id="pane-side"><div id="grid" aria-label="Chat list" role="grid"></div></div>
+  </div>
+  <div id="mainwrap"><div style="margin:auto;color:#667781">WhatsApp Web (practice copy)</div></div>
+</div>
+<script>
+(() => {
+  const ROW = 72;
+  const $ = (s, r = document) => r.querySelector(s);
+  const extra = +(new URLSearchParams(location.search).get("extra") || 0);
+  let clock = 1000;
+  const C = (name, o = {}) => Object.assign({ id: "c" + (++clock), name, ts: clock, me: true, msgs: [{ me: false, text: "Hello po, how much?" }, { me: true, text: "Hi! It's 1,500 po." }] }, o);
+  const convs = [
+    C("Joy Santos"),
+    C("+63 917 123 4567", { push: "Mark D" }),
+    C("Family GC", { group: true, icon: true, members: "Ana, Ben, Carl, You" }),
+    C("Moses Jacob", { me: false, msgs: [{ me: true, text: "Hi po!" }, { me: false, text: "Magkano po?" }] }),
+    C("🌸 Liza Cruz"),
+    C("Barkada", { group: true, members: "Dina, Eli, Fe, You" }),
+    C("ROBIN PIATS"),
+    C("Old Number", { blocked: true }),
+    C("+63 998 765 4321"),
+    C("Ana Reyes"),
+    C("Carlo Mendoza"),
+    C("Bea Lim", { me: false, msgs: [{ me: false, text: "Interested po" }] }),
+    C("Dan Villanueva"),
+    C("Ella Ramos"),
+    C("Fritz Tan"),
+    C("Gina Lopez"),
+    C("Hazel Uy"),
+    C("Ivan Cruz"),
+  ];
+  for (let i = 1; i <= extra; i++) convs.push(C("Lead Number " + i));
+  // Newest first, like WhatsApp: give the first one the latest time.
+  convs.forEach((c, i) => { c.ts = 100000 - i; });
+  const mock = window.__mock = { sent: [], opened: [], flags: {}, selected: null, convs };
+  const byTs = () => [...convs].sort((a, b) => b.ts - a.ts);
+  const AV = (n) => "data:image/svg+xml," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48'><circle cx='24' cy='24' r='24' fill='hsl(${n * 47 % 360},50%,60%)'/></svg>`);
+
+  function last(c) { return c.msgs[c.msgs.length - 1] || { me: false, text: "" }; }
+  function renderList() {
+    const grid = $("#grid"), pane = $("#pane-side");
+    const list = byTs();
+    grid.style.height = list.length * ROW + "px";
+    grid.innerHTML = "";
+    const from = mock.flags.virtual ? Math.max(0, Math.floor(pane.scrollTop / ROW) - 2) : 0;
+    const to = mock.flags.virtual ? Math.min(list.length, Math.ceil((pane.scrollTop + pane.clientHeight) / ROW) + 2) : list.length;
+    for (let i = from; i < to; i++) {
+      const c = list[i], l = last(c);
+      const r = document.createElement("div");
+      r.setAttribute("role", "listitem");
+      r.style.transform = `translateY(${i * ROW}px)`;
+      r.dataset.id = c.id;
+      const av = c.icon ? `<div class="av"><span data-icon="default-group">👥</span></div>` : c.name.startsWith("+") ? `<div class="av"><span data-icon="default-user">👤</span></div>` : `<div class="av"><img src="${AV(i)}" width="48" height="48" alt=""></div>`;
+      r.innerHTML = `<div class="cell" role="gridcell" tabindex="0">${av}<div class="meta"><div class="top"><span dir="auto" class="name"></span><span class="time">10:4${i % 10}</span></div>` +
+        `<div class="prev">${l.me ? '<span data-icon="msg-dblcheck">✓✓</span>' : ""}<span dir="ltr" class="pt"></span></div></div></div>`;
+      const nm = r.querySelector(".name"); nm.textContent = c.name; nm.setAttribute("title", c.name);
+      const pt = r.querySelector(".pt"); const ptxt = (c.group && !l.me ? "Ana: " : "") + (l.image ? "📷 " : "") + (l.text || "Photo"); pt.textContent = ptxt; pt.setAttribute("title", ptxt);
+      grid.appendChild(r);
+    }
+  }
+  $("#pane-side").addEventListener("scroll", () => { if (mock.flags.virtual) renderList(); });
+  $("#grid").addEventListener("click", (e) => {
+    const r = e.target.closest("[role=listitem]");
+    if (!r) return;
+    open(convs.find((c) => c.id === r.dataset.id));
+  });
+
+  function open(c) {
+    mock.opened.push(c.name);
+    $("#mainwrap").innerHTML = "";
+    setTimeout(() => { mock.selected = c; renderMain(); }, mock.flags.slowOpen || 300);
+  }
+  function sub(c) {
+    if (c.group) return c.members;
+    if (c.push) return "~" + c.push;
+    return "click here for contact info";
+  }
+  function renderMain() {
+    const c = mock.selected;
+    if (!c) return;
+    $("#mainwrap").innerHTML = `<div id="main"><header><div class="av">${c.icon ? '<span data-icon="default-group">👥</span>' : ""}</div>` +
+      `<div><div><span dir="auto" class="hname"></span></div><div class="sub"><span class="st"></span></div></div></header>` +
+      `<div class="msgs"></div><footer></footer></div>`;
+    $(".hname").textContent = c.name;
+    $(".st").textContent = sub(c); $(".st").setAttribute("title", sub(c));
+    renderMsgs();
+    const f = $("footer");
+    if (c.blocked) { f.innerHTML = `<div class="cant">You can't send messages to this chat because you blocked this contact. Tap to unblock.</div>`; return; }
+    f.innerHTML = `<button title="Attach"><span data-icon="plus-rounded">＋</span></button>` +
+      `<div class="box" contenteditable="true" role="textbox" aria-label="Type a message" data-tab="10"></div>` +
+      `<button class="send" aria-label="Send" hidden><span data-icon="wds-ic-send-filled">➤</span></button><button class="mic" aria-label="Voice message"><span data-icon="mic-outlined">🎤</span></button>`;
+    const box = $(".box"), send = $(".send"), mic = $(".mic");
+    const sync = () => { const has = !!box.innerText.trim(); send.hidden = !has; mic.hidden = has; };
+    box.addEventListener("input", sync);
+    box.addEventListener("paste", (e) => {
+      e.preventDefault();
+      const files = e.clipboardData && e.clipboardData.files;
+      if (files && files.length) { if (!mock.flags.noPasteImage) openEditor(files[0], box.innerText.trim()); return; }
+      const t = e.clipboardData.getData("text/plain");
+      if (mock.flags.noPasteText) return;
+      document.execCommand("insertText", false, t);
+      sync();
+    });
+    box.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); } });
+    send.addEventListener("click", sendText);
+    $('[title="Attach"]').addEventListener("click", () => {
+      if ($("#menu")) return;
+      const m = document.createElement("div");
+      m.id = "menu";
+      m.innerHTML = `<div>📷 Photos &amp; videos<input type="file" accept="image/*,video/mp4,video/3gpp,video/quicktime" style="display:none"></div>`;
+      document.body.appendChild(m);
+      m.querySelector("input").addEventListener("change", (e) => { const f0 = e.target.files[0]; m.remove(); if (f0) openEditor(f0, ""); });
+    });
+  }
+  function renderMsgs() {
+    const c = mock.selected, box = $(".msgs");
+    if (!box) return;
+    box.innerHTML = "";
+    c.msgs.forEach((m, i) => {
+      const d = document.createElement("div");
+      d.className = m.me ? "message-out" : "message-in";
+      d.dataset.id = (m.me ? "true_" : "false_") + c.id + "_" + i;
+      if (m.image) d.innerHTML = `<img src="${m.image}" alt="">`;
+      const t = document.createElement("span"); t.className = "txt"; t.textContent = m.text || ""; d.appendChild(t);
+      if (m.me) d.insertAdjacentHTML("beforeend", m.failed ? '<span data-icon="msg-error">!</span>' : '<span data-icon="msg-dblcheck">✓✓</span>');
+      box.appendChild(d);
+    });
+  }
+  function bump(c) { c.ts = ++clock + 200000; renderList(); }
+  function sendText() {
+    const c = mock.selected, box = $(".box");
+    const text = box.innerText.replace(/\n$/, "");
+    if (!text.trim()) return;
+    if (mock.flags.stuckFor === c.name || mock.flags.stuckAll) return; // Send does nothing
+    const failed = mock.flags.failFor === c.name;
+    c.msgs.push({ me: true, text, failed });
+    mock.sent.push({ id: c.id, name: c.name, text, image: false });
+    box.textContent = "";
+    box.dispatchEvent(new Event("input"));
+    renderMsgs(); bump(c); warnCheck();
+  }
+  function openEditor(file, draft) {
+    const url = URL.createObjectURL(file);
+    const ed = document.createElement("div");
+    ed.className = "media-editor";
+    ed.innerHTML = `<div role="button" aria-label="Close" class="close"><span data-icon="x">✕</span></div><img src="${url}" alt="">` +
+      `<div class="cap" contenteditable="true" role="textbox" aria-label="Add a caption"></div>` +
+      `<div role="button" aria-label="Send" class="esend"><span data-icon="wds-ic-send-filled">➤</span></div>`;
+    document.body.appendChild(ed);
+    const cap = ed.querySelector(".cap");
+    if (draft) cap.textContent = draft;
+    cap.addEventListener("paste", (e) => { e.preventDefault(); document.execCommand("insertText", false, e.clipboardData.getData("text/plain")); });
+    const go = () => {
+      const c = mock.selected, caption = cap.innerText.replace(/\n$/, "");
+      ed.remove();
+      setTimeout(() => {
+        c.msgs.push({ me: true, text: caption, image: url });
+        mock.sent.push({ id: c.id, name: c.name, text: caption, image: true });
+        renderMsgs(); bump(c); warnCheck();
+      }, 500);
+    };
+    cap.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
+    ed.querySelector(".esend").addEventListener("click", go);
+    ed.querySelector(".close").addEventListener("click", () => ed.remove());
+    ed.addEventListener("keydown", (e) => { if (e.key === "Escape") ed.remove(); });
+    document.addEventListener("keydown", function esc(e) { if (e.key === "Escape" && ed.isConnected) { ed.remove(); document.removeEventListener("keydown", esc); } });
+  }
+  function warnCheck() {
+    if (mock.flags.warnAfter && mock.sent.length >= mock.flags.warnAfter && !$(".dialog")) {
+      const d = document.createElement("div");
+      d.className = "dialog"; d.setAttribute("role", "dialog");
+      d.textContent = "This account is temporarily banned from WhatsApp because of spam. Try again later.";
+      document.body.appendChild(d);
+    }
+  }
+  renderList();
+})();
+</script>
+</body></html>
