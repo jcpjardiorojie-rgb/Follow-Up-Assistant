@@ -35,12 +35,15 @@ def wa_ext(pw):
           await chrome.storage.local.set({ settings: Object.assign({}, WAEngine.DEFAULTS, settings, { gapMinSec: 0, gapMaxSec: 0, stepDelayMs: 300, bottomWaitSec: 0, scrollWaitSec: 0.6 }) }); }""")
         panel.reload()
         panel.wait_for_selector("#where:has-text('Connected')")
+        panel._fu = {"profile": profile, "ext_id": ext_id, "sw": sw}
         yield wa, panel
         ctx.close()
 
 
 def tab(panel, name):
     panel.click(f".tabs button[data-tab={name}]")
+    if name == "settings":
+        panel.evaluate("() => document.querySelectorAll('details.sec').forEach((d) => { d.open = true; })")
 
 
 def set_val(panel, sel, value):
@@ -67,7 +70,7 @@ def test_defaults_preview_and_names(wa_ext):
     assert panel.is_checked("input[name=limitMode][value=ramp]")
     assert "day 1 → 50 today" in panel.text_content("#planNow")
     assert panel.text_content("#todayText") == "Today: 0 of 50 sent"
-    assert panel.text_content("#ver").startswith("v1.")
+    assert panel.text_content("#ver").startswith("v2.")
 
 
 def test_run_with_image_daily_plan_and_today_only(wa_ext):
@@ -201,3 +204,150 @@ def test_scroll_button_how_far_pause_resume_stop(wa_ext):
     panel.click("#scroll")
     panel.wait_for_selector("#checkOut:has-text('Reached the bottom of your chats')", timeout=60000)
     assert wa.evaluate("__mock.loaded") >= 78
+
+
+
+# ---------- 2.0 ----------
+from test_extension import install_fake_host  # noqa: E402
+
+
+def quick_run(panel, n, text="Hi {first_name}! New promo po 😊"):
+    tab(panel, "main")
+    panel.fill("#text", text); panel.dispatch_event("#text", "input")
+    tab(panel, "settings")
+    set_val(panel, "#r0", n)
+    panel.click("#start")
+    panel.wait_for_selector("#pill:has-text('Finished')", timeout=60000)
+
+
+def test_buyers_ask_first_then_send(wa_ext):
+    wa, panel = wa_ext
+    quick_run(panel, 2)
+    names = [x["name"] for x in sent(wa)]
+    wa.evaluate("(n) => __mock.reply(n, 'Magkano po?')", names[0])
+    wa.evaluate("(n) => __mock.reply(n, 'Not interested po')", names[1])
+    tab(panel, "buyers")
+    panel.click("#bCheck")
+    panel.wait_for_selector("#bMsg:has-text('2 replies')", timeout=60000)
+    panel.wait_for_selector("#pendingBox:visible")
+    assert len(sent(wa)) == 2  # ask first: nothing sent yet
+    assert "🔥 Hot" in panel.text_content("#buyers") and "❄️ Not interested" in panel.text_content("#buyers")
+    panel.click("#pending .primary")
+    panel.wait_for_selector("#bMsg:has-text('1 replies sent')", timeout=60000)
+    last = sent(wa)[-1]
+    assert last["name"] == names[0] and last["text"].startswith("Hi Joy! 😊 Thank you for your message po!")
+    panel.wait_for_selector("#pendingBox", state="hidden")
+    assert "answered ✓" in panel.text_content("#buyers")
+    assert panel.text_content("#cReplies") == "1"
+    assert panel.text_content("#hotCount") == "1"
+
+
+def test_buyers_automatic_with_label(wa_ext):
+    wa, panel = wa_ext
+    tab(panel, "settings")
+    panel.check("input[name=replyMode][value=auto]"); panel.dispatch_event("input[name=replyMode][value=auto]", "change")
+    panel.check("#bLabelOn"); panel.dispatch_event("#bLabelOn", "change")
+    quick_run(panel, 1)
+    wa.evaluate("__mock.reply('Joy Santos', 'how much po')")
+    tab(panel, "buyers")
+    panel.click("#bCheck")
+    panel.wait_for_selector("#bMsg:has-text('1 answered')", timeout=60000)
+    assert sent(wa)[-1]["text"].startswith("Hi Joy! 😊 Thank you")
+    assert wa.evaluate("__mock.labeled") == [{"name": "Joy Santos", "label": "Hot lead"}]
+    assert "🏷" in panel.text_content("#buyers")
+
+
+def test_log_tab_counters_and_export(wa_ext):
+    wa, panel = wa_ext
+    quick_run(panel, 2)
+    assert panel.text_content("#cSent") == "2"
+    tab(panel, "log")
+    panel.wait_for_selector("#runs li .st:has-text('ENDED')")
+    runs = panel.text_content("#runs")
+    assert "2 sent" in runs and "Today's limit reached" in runs
+    d = panel.text_content("#diary")
+    assert "RUN" in d and "FINISH" in d and "account “WhatsApp”" in d
+    panel.select_option("#dFilter", "runs")
+    panel.wait_for_timeout(500)
+    assert "AWAKE" not in panel.text_content("#diary")
+    tab(panel, "activity")
+    with panel.expect_download() as dl:
+        panel.click("#logExport")
+    csv = pathlib.Path(dl.value.path()).read_text(encoding="utf-8-sig")
+    assert csv.startswith("Time,Name,Status,Details") and "Joy Santos" in csv and "SENT" in csv
+
+
+def test_settings_fold_with_summaries_and_reset(wa_ext):
+    wa, panel = wa_ext
+    panel.click(".tabs button[data-tab=settings]")
+    assert panel.evaluate("[...document.querySelectorAll('details.sec')].filter((d) => d.open).map((d) => d.dataset.sec)") == ["order"]
+    assert "0–0 s between chats" in panel.text_content("#sum_send")  # the tests use no waiting
+    assert panel.is_hidden("#dOptions")
+    tab(panel, "settings")
+    panel.check("#dCheck"); panel.dispatch_event("#dCheck", "change")
+    assert panel.is_visible("#dOptions") and "stop after 3" in panel.text_content("#sum_order")
+    set_val(panel, "#sGapMin", 45); set_val(panel, "#sGapMax", 120)
+    assert "45–120 s" in panel.text_content("#sum_send")
+    panel.click("button.reset[data-reset=send]")
+    assert "30–90 s" in panel.text_content("#sum_send") and panel.input_value("#sGapMin") == "30"
+
+
+def test_saves_names_and_log_to_a_folder_and_brings_them_back(wa_ext):
+    import json
+    wa, panel = wa_ext
+    with tempfile.TemporaryDirectory() as tools:
+        log = install_fake_host(panel._fu["profile"], panel._fu["ext_id"], tools)
+        tab(panel, "settings")
+        set_val(panel, "#bkFolder", str(pathlib.Path(tools) / "FollowUp-History"))
+        set_val(panel, "#sAccount", "WA Business")
+        assert "WhatsApp - WA Business" in panel.text_content("#bkWhere")
+        assert panel.text_content("#account") == "WA Business"
+        panel.click("#helperCheck")
+        panel.wait_for_selector("#bkStatus:has-text('installed')", timeout=15000)
+        quick_run(panel, 2)
+        folder = pathlib.Path(tools) / "FollowUp-History" / "WhatsApp - WA Business"
+        csv = folder / "Message 1.csv"
+        panel.wait_for_function("() => true")
+        for _ in range(50):
+            if csv.exists():
+                break
+            wa.wait_for_timeout(200)
+        names = [x["name"] for x in sent(wa)]
+        text = csv.read_text(encoding="utf-8-sig")
+        assert text.startswith("Name,Date sent") and all(n in text for n in names)
+        tab(panel, "log")  # flushes the Log, also to the daily file
+        for _ in range(50):
+            if list(folder.glob("log-*.txt")):
+                break
+            wa.wait_for_timeout(200)
+        day = list(folder.glob("log-*.txt"))[0].read_text(encoding="utf-8")
+        assert "RUN" in day and "FINISH" in day
+        # Chrome forgot the names: they come back from the file, and "Already messaged" (by name) uses them.
+        panel.evaluate("async () => { await chrome.storage.local.set({ history: {}, campaign: { id: 1, doneKeys: [] } }); }")
+        tab(panel, "settings")
+        panel.check("#dCheck"); panel.dispatch_event("#dCheck", "change")
+        panel.select_option("#sStopBy", "name"); panel.dispatch_event("#sStopBy", "change")
+        set_val(panel, "#sStopAfter", 2)
+        set_val(panel, "#sToday", 10)
+        panel.click("#start")
+        panel.wait_for_selector("#pill:has-text('Finished')", timeout=60000)
+        assert "already had this message" in panel.text_content("#reason")
+        assert len(sent(wa)) == 2
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        assert any(c["action"] == "readFile" for c in calls)
+
+
+def test_keyboard_shortcuts(wa_ext):
+    wa, panel = wa_ext
+    sw = panel._fu["sw"]
+    tab(panel, "settings")
+    assert "Ctrl+Shift+5" in panel.text_content("#keys") or "(not set)" in panel.text_content("#keys")
+    r = sw.evaluate("handleCommand('toggle-run')")
+    assert r["ok"] and r["message"] == "Started"
+    panel.wait_for_selector("#pill:has-text('Running')", timeout=10000)
+    r = sw.evaluate("handleCommand('stop')")
+    assert r["message"] == "Stopped"
+    panel.wait_for_selector("#pill:has-text('Stopped')", timeout=20000)
+    r = sw.evaluate("handleCommand('toggle-scroll')")
+    assert r["message"].startswith("Scrolling")
+    sw.evaluate("handleCommand('stop')")

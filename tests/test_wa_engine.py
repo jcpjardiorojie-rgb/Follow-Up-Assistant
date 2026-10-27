@@ -266,3 +266,94 @@ def test_start_from_bottom_far_uses_how_far(wa):
     assert any("as far as" in (s.get("reason") or "") for s in res["states"])
     # one scroll loaded 8 more (28 chats): the 28th is "Lead Number 10", so it starts there
     assert names[0] == "Lead Number 10" and len(names) == 2
+
+
+# ---------- 2.0: Buyers (W1), Already messaged (W7), lowest chat on screen (W8) ----------
+def test_reply_sorting(wa):
+    r = wa.evaluate("""() => ["Magkano po?", "Interested po", "Not interested", "hello", "pa order 2 po", "no"].map((t) => WAEngine.tools.classifyReply(t, {}))""")
+    assert r == ["hot", "warm", "cold", "replied", "hot", "cold"]
+
+
+def test_finds_replies_and_sends_the_prepared_reply(wa):
+    run(wa, capLeft=3)
+    names = [x["name"] for x in sent(wa)]
+    wa.evaluate("(n) => __mock.reply(n, 'Magkano po?')", names[0])
+    wa.evaluate("(n) => __mock.reply(n, 'Not interested')", names[1])
+    r = wa.evaluate("(keys) => WAEngine.tools.scanReplies({}, keys)", names)
+    found = {x["name"]: x["kind"] for x in r["found"]}
+    assert found == {names[0]: "hot", names[1]: "cold"}
+    hot = [x for x in r["found"] if x["kind"] == "hot"][0]
+    res = wa.evaluate("""(c) => WAEngine.tools.sendReply({ stepDelayMs: 150, pageTimeoutMs: 3000 }, c, { text: "Hi {first_name}! Here's our price list po." })""", hot)
+    assert res["status"] == "REPLY"
+    last = sent(wa)[-1]
+    assert last["name"] == names[0] and last["text"].startswith("Hi Joy! Here's our price list po.")
+    # Already answered: not sent twice
+    res = wa.evaluate("""(c) => WAEngine.tools.sendReply({ stepDelayMs: 150 }, c, { text: "again" })""", hot)
+    assert res["status"] == "SKIPPED" and res["reason"] == "You already answered them"
+
+
+def test_label_hot_lead_in_whatsapp_business(wa):
+    r = wa.evaluate("""() => WAEngine.tools.labelChat({ labelName: "Hot lead" }, { key: "Ana Reyes", name: "Ana Reyes" })""")
+    assert r["ok"], r
+    assert wa.evaluate("__mock.labeled") == [{"name": "Ana Reyes", "label": "Hot lead"}]
+    wa.evaluate("__mock.flags.noLabels = true")
+    r = wa.evaluate("""() => WAEngine.tools.labelChat({ labelName: "Hot lead" }, { key: "Ana Reyes", name: "Ana Reyes" })""")
+    assert not r["ok"] and r["code"] == "LABEL_FAILED"
+
+
+ALREADY = """async (cfg) => {
+  const t = window.__t = { log: [], done: new Set(), sent: 0, states: [] };
+  const names = new Set(cfg.names || []);
+  const hooks = { log: (e) => t.log.push(e), state: (s) => t.states.push(s), alreadyDone: () => false, markDone() {}, onSent() {},
+    nameSent: (n) => names.has(n) };
+  const r = WAEngine.start(cfg, hooks);
+  await Promise.race([r.done, new Promise((res) => setTimeout(res, 90000))]);
+  if (r.state === "running" || r.state === "paused") { r.stop(); await r.done; }
+  return { state: r.state, states: t.states, log: t.log };
+}"""
+
+
+def test_already_messaged_stops_the_run(wa):
+    # First run: 4 people get the message. Then 2 new chats come in on top, and the run starts again.
+    run(wa, capLeft=4)
+    first = [x["name"] for x in sent(wa)]
+    res = wa.evaluate(ALREADY, {"template": TEMPLATE, **FAST, "dupCheck": True, "stopBy": "both", "stopAfter": 3, "names": first, "order": "bottom",
+                                "maxWaitMs": 90000})
+    # bottom-up: everyone below gets it, then it reaches the 4 from the first run (now at the top) and stops after 3
+    assert res["state"] == "finished" and res["states"][-1]["code"] == "already"
+    already = [e for e in res["log"] if e["status"] == "ALREADY"]
+    assert len(already) == 3 and all(e["name"] in first for e in already)
+    assert all(x["name"] not in first for x in sent(wa)[4:])
+
+
+def test_already_messaged_off_by_default_changes_nothing(wa):
+    res = run(wa, capLeft=2)
+    assert not [e for e in res["log"] if e["status"] == "ALREADY"]
+
+
+def test_lowest_chat_on_screen_goes_up_and_leaves_lower_ones(wa):
+    wa.goto(WA_URL + "?extra=30")
+    wa.evaluate(WA_JS)
+    wa.evaluate("document.getElementById('pane-side').scrollTop = 400")
+    lowest = wa.evaluate("""() => { const l = document.getElementById('pane-side'), b = l.getBoundingClientRect().bottom;
+      return WAEngine.tools.getRows().filter((r) => r.el.getBoundingClientRect().top < b - 10).pop().name; }""")
+    res = run(wa, order="screen", maxWaitMs=120000)
+    names = [x["name"] for x in sent(wa)]
+    assert names[0] == lowest
+    below = wa.evaluate("""(low) => { const all = __mock.convs.map(c => c.name); return all.slice(all.indexOf(low) + 1); }""", lowest)
+    assert not set(names) & set(below)
+    assert res["states"][-1]["reason"] == "Reached the top of your chats"
+
+
+def test_pause_and_wait_stops_between_chats(wa):
+    wa.evaluate("""() => { window.__t = { log: [], states: [] };
+      window.__r = WAEngine.start(Object.assign({ template: 'Hi {first_name}!', stepDelayMs: 150, gapMinSec: 1, gapMaxSec: 1, pageTimeoutMs: 3000 }), {
+        log: (e) => __t.log.push(e), state: (s) => __t.states.push(s), alreadyDone: () => false, markDone() {}, onSent() {} }); }""")
+    wa.wait_for_function("__mock.sent.length >= 1")
+    ok = wa.evaluate("WAEngine.pauseAndWait('Checking replies…', 20000)")
+    assert ok and wa.evaluate("__r.state") == "paused"
+    n = wa.evaluate("__mock.sent.length"); wa.wait_for_timeout(2500)
+    assert wa.evaluate("__mock.sent.length") == n
+    wa.evaluate("WAEngine.resume()")
+    wa.wait_for_function(f"__mock.sent.length > {n}")
+    wa.evaluate("WAEngine.stop()")

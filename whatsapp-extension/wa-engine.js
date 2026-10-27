@@ -1,4 +1,4 @@
-// FollowUp for WhatsApp: the part that works inside WhatsApp Web (web.whatsapp.com).
+// WhatsApp FollowUp-Assistant: the part that works inside WhatsApp Web (web.whatsapp.com).
 // It reads the chat list, opens each chat, writes your message with the person's first name,
 // adds your image and sends, one chat at a time, with a random pause between chats.
 (() => {
@@ -40,10 +40,44 @@
     notifyOnPause: true,
     ntfyTopic: "",
     ntfyServer: "https://ntfy.sh",
+    // "Already messaged" (W7): stop when the run reaches people who already got this message
+    dupCheck: false,
+    stopBy: "both", // "both" (name on your list AND the message in the chat) · "message" · "name" · "off"
+    stopAfter: 3,
+    finishOnAlready: true,
+    // Buyers tab (W1): replies to your follow-up, sorted, with ready auto-replies
+    replyMode: "ask", // "ask": you press Send · "auto": sent right away
+    autoCheckReplies: false,
+    autoCheckMinutes: 10,
+    autoCheckRows: 150,
+    labelHot: false, // WhatsApp Business: add a label to hot leads
+    labelName: "Hot lead",
+    hotWords: ["how much", "hm", "magkano", "mag kano", "price", "presyo", "pricelist", "order", "pa order", "mag order",
+      "paorder", "cod", "available", "avail", "meron pa", "may stock", "stock", "saan", "location", "loc", "address",
+      "reserve", "pa reserve", "bibili", "bili", "kukuha", "kuha", "buy", "payment", "gcash", "how to order", "paano",
+      "pano", "delivery", "shipping", "sf", "rate"],
+    warmWords: ["interested", "interesado", "details", "detail", "info", "more info", "pa send", "pasend", "send", "pm",
+      "sige", "ok", "okay", "oo", "yes", "yup", "ge", "pwede", "pede", "ano po", "ano yan", "tell me more", "pakita",
+      "picture", "pic", "pics"],
+    coldWords: ["not interested", "no thanks", "no thank you", "hindi na", "di na", "wag na", "huwag na", "ayaw ko",
+      "ayoko", "stop", "unsubscribe", "busy", "no", "ayaw", "hindi"],
+    // Saving names and the Log to a folder on your PC (W2/W3), through the Windows helper
+    backupOn: true,
+    backupFolder: "D:\\FollowUp-History", // files go in a "WhatsApp - <account>" folder inside it
+    accountName: "WhatsApp", // a different name in each Chrome profile, e.g. "WA Business"
+    backupEvery: 25,
+    diaryToFile: true,
     // Shown by WhatsApp in a pop-up when it's limiting or checking the account: stop right away.
     warnTexts: ["banned", "restricted", "unusual activity", "suspicious", "too many messages", "spam"],
     // Shown where the message box should be when the chat can't get messages.
     cantTexts: ["can't send messages", "cannot send messages", "you blocked this contact", "unblock", "only admins can send"],
+  };
+
+  const DEFAULT_REPLIES = {
+    hot: { on: true, text: "Hi {first_name}! 😊 Thank you for your message po! Here's our price list. Which one would you like po? Just reply with the item and we'll reserve it for you.", imageDataUrl: "", imageName: "" },
+    warm: { on: true, text: "Hi {first_name}! Sure po 😊 Here are the details. If you have any questions, just message us anytime, happy to help!", imageDataUrl: "", imageName: "" },
+    cold: { on: false, text: "Noted po, thank you {first_name}! 🙏 Just message us anytime if you change your mind.", imageDataUrl: "", imageName: "" },
+    replied: { on: false, text: "Thank you for your message po, {first_name}! We'll get back to you shortly 😊", imageDataUrl: "", imageName: "" },
   };
 
   // ---------- small helpers ----------
@@ -120,6 +154,20 @@
     return l ? norm(l.replace(/^~\s*/, "")) : "";
   }
 
+  // Sorts a reply into "hot", "warm", "cold" (not interested) or "replied" (unclear).
+  function classifyReply(text, cfg) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    const words = (s) => " " + low(s).normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").trim() + " ";
+    const t = words(text);
+    const has = (w) => { const p = words(w); return p.trim() && t.includes(p); };
+    const strongCold = cfg.coldWords.filter((w) => w.trim().includes(" ") || w.length > 5);
+    if (strongCold.some(has)) return "cold";
+    if (cfg.hotWords.some(has)) return "hot";
+    if (cfg.warmWords.some(has)) return "warm";
+    if (cfg.coldWords.some(has)) return "cold";
+    return "replied";
+  }
+
   // ---------- reading WhatsApp Web ----------
   function findList() {
     const pane = document.getElementById("pane-side");
@@ -150,8 +198,11 @@
     if (!name) return null;
     const ic = icons(el);
     const lines = textLines(el);
+    const titled = [...el.querySelectorAll("span[title]")];
+    const pv = titled.length > 1 ? titled[titled.length - 1] : null;
     return {
       el, name, key: name, lines,
+      preview: norm(pv ? pv.getAttribute("title") || pv.textContent : lines.slice(1).find((l) => l !== name && !/^\d{1,2}:\d{2}/.test(l)) || ""),
       // Ticks (or the clock) in the preview mean your message is the last one.
       fromMe: ic.some((i) => /check|msg-time|status-time/.test(i)),
       groupIcon: ic.some((i) => /default-group|community/.test(i)),
@@ -202,6 +253,14 @@
     const f = m.querySelector("footer");
     if (f) { const ft = sig(f.innerText); if (ft) t = t.replace(ft, ""); }
     return t;
+  }
+  // Is this message (with any name in it) already one of your messages in the open chat?
+  function chatHasMessage(template, cfg) {
+    const parts = String(template || "").split(/\{\s*(?:first[_ ]?|full[_ ]?)?name\s*\}/i).map(sig).filter((x) => x.length >= 6);
+    const key = parts.sort((a, b) => b.length - a.length)[0] || sig(template).slice(0, 30);
+    if (!key) return false;
+    const mine = sig(outgoing().map((e) => e.innerText).join(" "));
+    return mine.includes(key.slice(0, 40));
   }
   function errorIcons() { return outgoing().filter((e) => icons(e).some((i) => /error|alert|failed/.test(i))).length; }
   function dialogText() {
@@ -371,7 +430,10 @@
     WA_NOT_SENT: { what: "WhatsApp showed that the message wasn't sent (red mark).", why: "Connection problem, or WhatsApp is limiting your messages.", fix: "Check your internet and phone. If it repeats, stop for today and lower the daily number." },
     WA_WARNING: { what: "WhatsApp showed a warning, so FollowUp stopped.", why: "WhatsApp may be limiting or checking your number.", fix: "Read the warning in WhatsApp Web. Stop for today, and use a lower daily number for a few days." },
     ERROR: { what: "Something unexpected went wrong on this chat, so nothing was sent.", why: "WhatsApp Web changed in a way FollowUp didn't expect.", fix: "Press F5 on WhatsApp Web, then Resume. If it repeats, send Claude the Problems tab." },
-    SHUTDOWN_HELPER: { what: "The run finished, but the computer couldn't be shut down.", why: "The Windows helper isn't installed for this extension yet.", fix: "Double-click windows\\Setup-FollowUp.bat once more (after installing FollowUp for WhatsApp), then reload the extension." },
+    SHUTDOWN_HELPER: { what: "The run finished, but the computer couldn't be shut down.", why: "The Windows helper isn't installed for this extension yet.", fix: "Double-click windows\\Setup-FollowUp.bat once more (after installing WhatsApp FollowUp-Assistant), then reload the extension." },
+    LABEL_FAILED: { what: "The label couldn't be added to this chat.", why: "Labels only exist in WhatsApp Business, or the label menu looked different.", fix: "Add the label yourself (right-click the chat → Label chat). If it fails every time, untick “Add a label” and send Claude a screenshot of the label menu." },
+    CHAT_NOT_FOUND: { what: "This person's chat couldn't be found in the chat list.", why: "The chat is far down the list, archived, or the name changed.", fix: "Search for the name in WhatsApp Web and answer them yourself." },
+    BACKUP_FAILED: { what: "The names couldn't be saved to the folder on your PC.", why: "The Windows helper isn't installed (or is old), or the folder path is wrong.", fix: "Double-click windows\\Setup-FollowUp.bat once, then Settings → Saving → “Check Windows helper”." },
     NOTIFY_FAILED: { what: "The phone notification couldn't be sent.", why: "No internet, or the ntfy topic is empty or wrong.", fix: "Settings → Notifications: check the topic, then press “Send a test”." },
   };
 
@@ -386,10 +448,18 @@
       return out(status, reason, e);
     };
 
+    const replying = !!cfg.replying; // an auto-reply to someone who answered (Buyers tab), not the follow-up
+    const run = ctx.run || null;
     // Decided from the list, without opening the chat.
     if (cfg.skipGroups && row.groupIcon) return out("SKIPPED", "Group chat");
-    if (cfg.onlyIfLastFromMe && !row.fromMe) return out("SKIPPED", "Customer wrote last — answer them yourself");
-    if (await hooks.alreadyDone(row.key)) return out("SKIPPED", "Already got this message (this campaign)");
+    if (replying && row.fromMe) return out("SKIPPED", "You already answered them");
+    if (!replying && cfg.onlyIfLastFromMe && !row.fromMe) return out("SKIPPED", "Customer wrote last — answer them yourself");
+    if (!replying && (await hooks.alreadyDone(row.key))) return out("SKIPPED", "Already got this message (this campaign)");
+    // "Already messaged" (W7): by name, decided from the list.
+    const thisRun = !!run && run.sentThisRun.has(row.name);
+    const dupOn = !replying && cfg.dupCheck && cfg.stopBy !== "off";
+    const nameHit = dupOn && hooks.nameSent ? !!(await hooks.nameSent(row.name)) : false;
+    if (dupOn && cfg.stopBy === "name" && nameHit) return thisRun ? out("SKIPPED", "Messaged earlier in this run") : out("ALREADY", "Already got this message (name)", { counted: true });
 
     // Open the chat and make sure it really is this person.
     const alreadyOpen = headerHasName(row.name);
@@ -414,6 +484,11 @@
 
     const composer = findComposer() || (await waitFor(findComposer, 3000, 250));
     if (!composer) return problem("NO_MESSAGE_BOX", "Message box not found — nothing sent");
+    // "Already messaged" (W7): is this message already in the chat?
+    if (dupOn && (nameHit || cfg.stopBy === "message") && chatHasMessage(cfg.template, cfg)) {
+      const counted = !thisRun && (cfg.stopBy === "message" || nameHit);
+      return out(thisRun ? "SKIPPED" : "ALREADY", thisRun ? "Messaged earlier in this run" : "Already got this message" + (nameHit ? " (name and message)" : " (message)"), { counted });
+    }
 
     const tilde = row.tilde || tildeName(headerLines());
     const text = render(cfg.template, row.name, cfg, tilde);
@@ -474,12 +549,12 @@
     const ok = await waitFor(() => outgoing().length > outBefore || textShown(), hasImage ? 20000 : 8000);
     await sleep(600);
     if (errorIcons() > errBefore) {
-      await hooks.markDone(row.key);
+      if (!replying) await hooks.markDone(row.key);
       return problem("WA_NOT_SENT", "WhatsApp says the message wasn't sent — not retried", { status: "UNKNOWN" });
     }
-    await hooks.markDone(row.key);
-    await hooks.onSent();
-    return out("SENT", how + (ok ? "" : " · couldn't double-check it on screen, but the box emptied with no error"), { text, confirmed: !!ok });
+    if (!replying) await hooks.markDone(row.key);
+    await hooks.onSent(Object.assign({}, row, { el: undefined }), text, replying);
+    return out(replying ? "REPLY" : "SENT", how + (ok ? "" : " · couldn't double-check it on screen, but the box emptied with no error"), { text, confirmed: !!ok });
 
     async function sendText(box, t) {
       if (!(await putText(box, t))) return false;
@@ -575,6 +650,7 @@
       this.cfg = Object.assign({}, DEFAULTS, cfg || {});
       this.hooks = Object.assign({ log() {}, state() {}, alreadyDone: () => false, markDone() {}, onSent() {} }, hooks || {});
       this.state = "idle"; this.paused = false; this.stopped = false; this.wake = null;
+      this.sentThisRun = new Set(); this.atGate = false;
     }
     setState(state, reason, code) {
       this.state = state;
@@ -583,8 +659,16 @@
     pause(reason) { if (this.state !== "running") return; this.paused = true; this.setState("paused", reason || "Paused"); }
     resume() { if (!this.paused) return; this.paused = false; this.setState("running", "Resumed"); if (this.wake) this.wake(); }
     stop() { this.stopped = true; this.paused = false; if (this.wake) this.wake(); }
+    // Pause after the chat it's on, and wait until it really stopped (used to answer replies mid-run).
+    async pauseAndWait(reason, timeoutMs = 120000) {
+      if (this.state !== "running") return this.state === "paused";
+      this.pause(reason);
+      return !!(await waitFor(() => this.atGate || this.stopped || this.state !== "paused", timeoutMs, 200));
+    }
     async gate() {
+      if (this.paused) this.atGate = true;
       while (this.paused && !this.stopped) await new Promise((r) => { this.wake = r; setTimeout(r, 500); });
+      this.atGate = false;
       if (this.stopped) throw STOP;
       if (this.cfg.waitWhenHidden !== false && document.hidden) {
         this.setState("running", "Waiting: WhatsApp Web is hidden (another tab, minimized, or behind another window). It continues the moment it's visible.", "hidden");
@@ -608,8 +692,14 @@
           await this.gate();
           list = findList();
         }
-        const bottomFirst = cfg.order === "bottom" || cfg.order === "bottomFar";
-        if (bottomFirst) {
+        const bottomFirst = cfg.order === "bottom" || cfg.order === "bottomFar" || cfg.order === "screen";
+        const visited = new Set();
+        if (cfg.order === "screen") {
+          // W8: start at the lowest chat you can see now and go up; chats below it are left alone.
+          const lr = rect(list);
+          for (const r of getRows(list)) if (rect(r.el).top >= lr.bottom - 10) visited.add(r.key);
+          this.setState("running", "Starting at the lowest chat on screen, going up.");
+        } else if (bottomFirst) {
           this.setState("running", "Scrolling down to your oldest chats…");
           const r = await scrollDown(cfg, {
             gate: () => this.gate(),
@@ -618,8 +708,7 @@
           }, cfg.order === "bottom");
           this.setState("running", (r.reachedEnd ? "Reached the bottom of your chats" : `Scrolled ${r.scrolls} times (as far as “How far” says)`) + ". Sending from the bottom up.");
         }
-        const visited = new Set();
-        let failures = 0, sent = 0, stuck = 0;
+        let failures = 0, sent = 0, stuck = 0, already = 0;
         const cap = Math.max(0, cfg.capLeft === Infinity ? Infinity : Math.floor(+cfg.capLeft));
         for (;;) {
           await this.gate();
@@ -642,7 +731,7 @@
           visited.add(row.key);
           hooks.state({ state: "running", reason: "", current: row.name });
           let res;
-          try { res = await processRow({ cfg, hooks, list }, row); }
+          try { res = await processRow({ cfg, hooks, list, run: this }, row); }
           catch (e) {
             if (e === STOP) throw e;
             res = { time: new Date().toISOString(), name: row.name, key: row.key, status: "FAILED", reason: "Error: " + (e && e.message ? e.message : e), code: "ERROR", help: HELP.ERROR };
@@ -657,12 +746,18 @@
             this.pause(`Paused after ${cfg.maxConsecutiveFailures} problems in a row. Last one (${res.name}): ${h.what} How to fix: ${h.fix} See the Problems tab, then press Resume.`);
             continue;
           }
+          if (res.status === "SENT" || res.status === "UNKNOWN" || res.status === "TEST") { this.sentThisRun.add(row.name); already = 0; }
+          if (res.status === "ALREADY" && res.counted) already++;
+          if (cfg.dupCheck && cfg.stopBy !== "off" && already >= Math.max(1, Math.round(+cfg.stopAfter || 3))) {
+            this.setState("finished", `Stopped: ${already} chats in a row already had this message, so this run reached the people from your last run.`, "already");
+            return;
+          }
           if (res.status === "SENT") {
             sent++;
             const lo = Math.max(0, +cfg.gapMinSec || 0), hi = Math.max(lo, +cfg.gapMaxSec || lo);
             await this.wait((lo + Math.random() * (hi - lo)) * 1000);
           } else if (res.status === "TEST") await this.wait(1500);
-          else await this.wait(res.status === "SKIPPED" && !headerHasName(res.name) ? 50 : 600);
+          else await this.wait((res.status === "SKIPPED" || res.status === "ALREADY") && !headerHasName(res.name) ? 50 : 600);
         }
       } catch (e) {
         if (e === STOP) { this.setState("stopped", "Stopped"); return; }
@@ -678,6 +773,96 @@
     current.done = current.run();
     return current;
   }
+
+  // ---------- replies and buyers (W1) ----------
+  // Scrolls the chat list from the top and collects people FollowUp messaged who wrote back.
+  const scan = { cancel: false };
+  async function scanReplies(cfg, keys, onProgress, maxRows) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    const want = new Set(keys || []);
+    const list = findList();
+    if (!list) return { ok: false, message: "Can't find your chat list. Open WhatsApp Web first.", found: [] };
+    scan.cancel = false;
+    const seen = new Set(), found = [];
+    list.scrollTop = 0;
+    await sleep(500);
+    let still = 0;
+    while (!scan.cancel && seen.size < (maxRows || cfg.autoCheckRows || 150)) {
+      for (const r of getRows(list)) {
+        if (seen.has(r.key)) continue;
+        seen.add(r.key);
+        if (want.has(r.key) && !r.fromMe && !r.groupIcon && r.preview) found.push({ key: r.key, name: r.name, reply: r.preview, kind: classifyReply(r.preview, cfg) });
+      }
+      if (onProgress) onProgress({ checked: seen.size, found: found.length });
+      const before = list.scrollTop;
+      list.scrollTop = before + Math.max(120, list.clientHeight * 0.8);
+      await sleep(500);
+      if (Math.abs(list.scrollTop - before) < 2) { if (++still >= 2) break; } else still = 0;
+    }
+    list.scrollTop = 0;
+    return { ok: true, found, checked: seen.size, stopped: scan.cancel };
+  }
+  // Finds a chat in the list by its name (scrolls from the top).
+  async function findRow(key, maxScreens = 60) {
+    const list = findList();
+    if (!list) return null;
+    list.scrollTop = 0;
+    await sleep(400);
+    for (let i = 0; i < maxScreens; i++) {
+      const r = getRows(list).find((x) => x.key === key);
+      if (r) return { list, row: r };
+      const before = list.scrollTop;
+      list.scrollTop = before + Math.max(120, list.clientHeight * 0.8);
+      await sleep(400);
+      if (Math.abs(list.scrollTop - before) < 2) break;
+    }
+    return null;
+  }
+  // Sends your prepared reply to one person who answered (same careful sending as the follow-up).
+  async function sendReply(cfg, contact, reply, hooks) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {}, { template: reply.text, image: reply.imageDataUrl ? { dataUrl: reply.imageDataUrl, name: reply.imageName || "image.jpg" } : null,
+      replying: true, onlyIfLastFromMe: false, dupCheck: false });
+    const f = await findRow(contact.key);
+    if (!f) return { time: new Date().toISOString(), name: contact.name, key: contact.key, status: "FAILED", reason: "Chat not found in the list", code: "CHAT_NOT_FOUND", help: HELP.CHAT_NOT_FOUND };
+    const h = Object.assign({ alreadyDone: () => false, markDone() {}, onSent() {} }, hooks || {});
+    try { return await processRow({ cfg, hooks: h, list: f.list }, f.row); }
+    catch (e) { return { time: new Date().toISOString(), name: contact.name, key: contact.key, status: "FAILED", reason: "Error: " + (e && e.message ? e.message : e), code: "ERROR", help: HELP.ERROR }; }
+  }
+  // WhatsApp Business: add a label (like "Hot lead") to a chat: chat menu → Label chat → tick the label → Save.
+  async function labelChat(cfg, contact) {
+    cfg = Object.assign({}, DEFAULTS, cfg || {});
+    const f = await findRow(contact.key);
+    if (!f) return { ok: false, code: "CHAT_NOT_FOUND", help: HELP.CHAT_NOT_FOUND };
+    const fail = async (why) => { pressEscape(); await sleep(300); pressEscape(); return { ok: false, why, code: "LABEL_FAILED", help: HELP.LABEL_FAILED }; };
+    const el = f.row.el;
+    await bringIntoView(el, f.list);
+    // The little arrow that shows on the chat row when you point at it opens the chat menu.
+    const o = { bubbles: true, cancelable: true, view: window };
+    for (const t of ["mouseover", "mouseenter", "mousemove"]) el.dispatchEvent(new MouseEvent(t, o));
+    await sleep(300);
+    let menuBtn = [...el.querySelectorAll("[data-icon]")].find((e) => /down|chevron|menu/.test(e.getAttribute("data-icon")));
+    if (menuBtn) click(menuBtn.closest("button,[role=button]") || menuBtn);
+    else { const { x, y } = center(el); el.dispatchEvent(new MouseEvent("contextmenu", { ...o, clientX: x, clientY: y, button: 2 })); }
+    const item = await waitFor(() => [...document.querySelectorAll('[role="application"] li,[role="menu"] [role="menuitem"],[role="menu"] li,li[role="button"]')]
+      .find((e) => isVisible(e) && /label chat|label/i.test(e.innerText || "")), 3000);
+    if (!item) return fail("No “Label chat” in the chat menu");
+    click(item);
+    const box = await waitFor(() => [...document.querySelectorAll('[role="dialog"],[data-animate-modal-body]')].find(isVisible), 3000);
+    if (!box) return fail("The label list didn't open");
+    const lab = [...box.querySelectorAll("span,div,label")].find((e) => norm(e.textContent) === norm(cfg.labelName) && isVisible(e));
+    if (!lab) return fail(`No label called “${cfg.labelName}” (make it once in WhatsApp Business → Labels)`);
+    const row = lab.closest('[role="checkbox"],[role="button"],li,label') || lab;
+    const chk = row.querySelector('input[type="checkbox"],[role="checkbox"]') || (row.getAttribute("role") === "checkbox" ? row : null);
+    const ticked = () => (chk ? chk.checked === true || chk.getAttribute("aria-checked") === "true" : false);
+    if (!ticked()) click(row);
+    await sleep(300);
+    const save = [...box.querySelectorAll("button,[role=button]")].find((b) => /^(save|done|ok)$/i.test(norm(b.innerText)) || /checkmark|done/.test((b.querySelector("[data-icon]") || { getAttribute: () => "" }).getAttribute("data-icon") || ""));
+    if (save) click(save);
+    const closed = await waitFor(() => !box.isConnected || !isVisible(box), 3000);
+    return closed ? { ok: true } : fail("The label list didn't close after Save");
+  }
+  function listPosition() { const l = findList(); return l ? l.scrollTop : null; }
+  async function restoreListPosition(top) { const l = findList(); if (l && top != null) { l.scrollTop = top; await sleep(400); } }
 
   // "Check page": what FollowUp can find on this page right now.
   function diagnose(cfg) {
@@ -706,6 +891,8 @@
     pause: (r) => current && current.pause(r),
     resume: () => current && current.resume(),
     stop: () => current && current.stop(),
-    tools: { diagnose, scrollButton, pauseScroll, resumeScroll, stopScroll, scrollState: () => scrollJob.state, greetName, render, isPhone, getRows: () => { const l = findList(); return l ? getRows(l) : []; } },
+    DEFAULT_REPLIES,
+    pauseAndWait: (r, t) => (current ? current.pauseAndWait(r, t) : Promise.resolve(false)),
+    tools: { diagnose, classifyReply, scanReplies, stopScan: () => { scan.cancel = true; }, sendReply, labelChat, findRow, listPosition, restoreListPosition, chatHasMessage, scrollButton, pauseScroll, resumeScroll, stopScroll, scrollState: () => scrollJob.state, greetName, render, isPhone, getRows: () => { const l = findList(); return l ? getRows(l) : []; } },
   };
 })();

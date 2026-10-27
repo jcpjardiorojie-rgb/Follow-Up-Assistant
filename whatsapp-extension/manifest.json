@@ -1,15 +1,69 @@
 {
   "manifest_version": 3,
-  "name": "FollowUp for WhatsApp by Rojie Jardio",
-  "description": "FollowUp Copilot for WhatsApp Web: sends your follow-up message with the person's first name (and your image) to your existing WhatsApp chats, one by one.",
-  "version": "1.1.0",
-  "permissions": ["storage", "unlimitedStorage", "sidePanel", "scripting", "nativeMessaging", "notifications", "power"],
-  "host_permissions": ["https://web.whatsapp.com/*", "https://ntfy.sh/*"],
-  "background": { "service_worker": "background.js" },
-  "side_panel": { "default_path": "sidepanel.html" },
-  "action": { "default_title": "Open FollowUp for WhatsApp", "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png" } },
-  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "name": "WhatsApp FollowUp-Assistant by Rojie Jardio",
+  "description": "Sends your follow-up message with the person's first name (and your image) to your existing WhatsApp Web chats, one by one, and helps you answer the people who reply.",
+  "version": "2.0.0",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "sidePanel",
+    "scripting",
+    "nativeMessaging",
+    "notifications",
+    "power"
+  ],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "https://ntfy.sh/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open WhatsApp FollowUp-Assistant",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "content_scripts": [
-    { "matches": ["https://web.whatsapp.com/*"], "js": ["wa-engine.js", "content.js"], "run_at": "document_idle" }
-  ]
+    {
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "js": [
+        "wa-engine.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "toggle-run": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+5"
+      },
+      "description": "Start / Pause / Resume sending"
+    },
+    "stop": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+6"
+      },
+      "description": "Stop (sending or scrolling)"
+    },
+    "toggle-scroll": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+7"
+      },
+      "description": "Scroll chat list to the bottom / Pause / Resume"
+    }
+  }
 }

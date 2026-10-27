@@ -3,14 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FollowUp for WhatsApp</title>
+<title>WhatsApp FollowUp-Assistant</title>
 <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
 <header class="top">
-  <div>
-    <h1>FollowUp for WhatsApp <span class="sub">by Rojie Jardio</span></h1>
-    <div id="where" class="sub">Looking for WhatsApp Web…</div>
+  <div class="brand">
+    <img src="icons/icon48.png" alt="" width="28" height="28">
+    <div>
+      <h1>WhatsApp FollowUp-Assistant</h1>
+      <div class="sub">by Rojie Jardio · <span id="account">WhatsApp</span></div>
+      <div id="where" class="sub">Looking for WhatsApp Web…</div>
+    </div>
   </div>
   <div class="topright">
     <span id="ver" class="ver"></span>
@@ -23,6 +27,7 @@
   <div id="current" class="current"></div>
   <div id="hiddenBox" class="hiddenbox" hidden>
     <div id="hiddenWhy"></div>
+    <div id="hiddenLaunch" hidden>Chrome wasn't opened with the <b>FollowUp Chrome</b> icon, so a window that's covered counts as hidden. To fix: close all Chrome windows (also Chrome in the taskbar tray), then open Chrome with the FollowUp Chrome icon on your desktop.</div>
     <div class="row"><button id="hShow" class="small primary">Show WhatsApp Web</button><button id="hStop" class="small danger">Stop</button></div>
   </div>
   <div id="finishBar" class="finishbar" hidden><span id="finishText"></span><button id="finishCancel" class="small primary">Cancel</button></div>
@@ -35,6 +40,12 @@
     <div class="row" style="justify-content:space-between"><span id="todayText">Today: 0 of 50 sent</span><span id="dayText" class="hint"></span></div>
     <div class="bar"><i id="todayBar"></i></div>
   </div>
+  <div class="counts">
+    <div><b id="cSent">0</b><span>sent today</span></div>
+    <div><b id="cSkipped">0</b><span>skipped</span></div>
+    <div><b id="cReplies">0</b><span>replies sent</span></div>
+    <div><b id="cFailed">0</b><span>problems</span></div>
+  </div>
   <div class="row"><button id="scroll" class="small">Scroll chat list to the bottom</button><button id="openWa" class="small">Open WhatsApp Web</button><button id="check" class="small">Check page</button></div>
   <div id="scrollBar" class="hiddenbox" hidden><span id="scrollMsg">Scrolling…</span><div class="row"><button id="scrollStop" class="small danger">Stop scrolling</button></div></div>
   <pre id="checkOut" class="out" hidden></pre>
@@ -42,8 +53,10 @@
 
 <nav class="tabs" role="tablist">
   <button role="tab" data-tab="main" aria-selected="true">Message</button>
+  <button role="tab" data-tab="buyers" aria-selected="false">Buyers<span id="hotCount" class="count hot" hidden></span></button>
   <button role="tab" data-tab="activity" aria-selected="false">Activity</button>
   <button role="tab" data-tab="problems" aria-selected="false">Problems<span id="probCount" class="count" hidden></span></button>
+  <button role="tab" data-tab="log" aria-selected="false">Log</button>
   <button role="tab" data-tab="settings" aria-selected="false">Settings</button>
 </nav>
 
@@ -75,10 +88,23 @@
   </div>
 </section>
 
+<!-- Buyers (W1) -->
+<section id="tab-buyers" class="card" hidden>
+  <div class="row" style="justify-content:space-between"><h2>Buyers: people who replied</h2></div>
+  <div class="row"><button id="bCheck" class="primary small">Check replies now</button><button id="bSendAll" class="small" hidden>Send all waiting replies</button><button id="bLabel" class="small">Label hot leads</button><button id="bStop" class="small danger" hidden>Stop</button></div>
+  <div id="bMsg" class="hint"></div>
+  <div id="pendingBox" class="pending" hidden><b>Waiting for you to press Send</b><ol id="pending" class="log"></ol></div>
+  <div id="buyers"></div>
+  <details class="replies">
+    <summary><h3>Your ready replies</h3></summary>
+    <div class="hint">Sent to people who answered your follow-up, by what they wrote. {first_name} works here too.</div>
+    <div id="replyCards"></div>
+  </details>
+</section>
+
 <!-- Activity -->
 <section id="tab-activity" class="card" hidden>
-  <div class="row" style="justify-content:space-between"><h2>Activity</h2><div class="row"><button id="copyClaude" class="small primary">Copy for Claude</button><button id="logClear" class="small">Clear</button></div></div>
-  <div id="copied" class="hint" hidden>Copied. Paste it in your message to Claude.</div>
+  <div class="row" style="justify-content:space-between"><h2>Activity</h2><div class="row"><button id="logExport" class="small">Export CSV</button><button id="logClear" class="small">Clear</button></div></div>
   <ol id="log" class="log"></ol>
 </section>
 
@@ -88,92 +114,167 @@
   <ol id="problems" class="log"></ol>
 </section>
 
-<!-- Settings -->
+<!-- Log (W2) -->
+<section id="tab-log" class="card" hidden>
+  <div class="row" style="justify-content:space-between"><h2>Log</h2><div class="row"><button id="copyClaude" class="small primary">Copy for Claude</button><button id="dExport" class="small">Export</button><button id="dClear" class="small">Clear</button></div></div>
+  <div id="copied" class="hint" hidden>Copied. Paste it in your message to Claude.</div>
+  <h3>Last runs</h3>
+  <ol id="runs" class="log"></ol>
+  <div class="row" style="justify-content:space-between"><h3>Everything that happened (30 days)</h3>
+    <select id="dFilter" style="width:auto"><option value="all">All</option><option value="runs">Starts and ends</option><option value="problems">Problems</option><option value="wait">Waiting / hidden / sleep</option><option value="replies">Replies</option></select></div>
+  <ol id="diary" class="log diary"></ol>
+</section>
+
+<!-- Settings (W4: folding sections) -->
 <section id="tab-settings" class="card" hidden>
-  <div class="sec">
-    <h3>1 · Which chats, in what order</h3>
-    <label>Start from<select id="sOrder">
-      <option value="top">Top (newest chats first)</option>
-      <option value="bottom">Bottom: scroll all the way down (oldest chats first), then go up</option>
-      <option value="bottomFar">Bottom: scroll down as far as “How far” says (Settings → 7), then go up</option>
-    </select></label>
-    <label class="check"><input id="sLastMine" type="checkbox"> Only chats where my message is the last one <span class="hint">(skip people who wrote last: they need a real answer)</span></label>
-    <label class="check"><input id="sGroups" type="checkbox"> Skip group chats</label>
-  </div>
-
-  <div class="sec">
-    <h3>2 · Names</h3>
-    <label>Word for numbers only (not saved in your phone)<input id="sWord" type="text" placeholder="po"></label>
-    <div class="hint">“Hi {first_name}!” becomes “Hi <span id="wordEx">po</span>!” for them, never “Hi +63917…!”.</div>
-    <label class="check"><input id="sTilde" type="checkbox"> If WhatsApp shows their own name with “~” (like ~Mark), use it: “Hi Mark!”</label>
-  </div>
-
-  <div class="sec">
-    <h3>3 · How many per day</h3>
-    <label class="check"><input type="radio" name="limitMode" value="ramp"> Grow by itself (warm-up, safest)</label>
-    <div class="grid5">
-      <label>Days 1–3<input id="r0" type="number" min="1"></label>
-      <label>Days 4–6<input id="r1" type="number" min="1"></label>
-      <label>Week 2<input id="r2" type="number" min="1"></label>
-      <label>Week 3<input id="r3" type="number" min="1"></label>
-      <label>After<input id="r4" type="number" min="1"></label>
+  <details class="sec" data-sec="order">
+    <summary><span class="sect">1 · Which chats, in what order</span><small class="sum" id="sum_order"></small></summary>
+    <div class="secbody">
+      <label>Start from<select id="sOrder">
+        <option value="top">Top (newest chats first)</option>
+        <option value="bottom">Bottom: scroll all the way down (oldest chats first), then go up</option>
+        <option value="bottomFar">Bottom: scroll down as far as “How far” says (Settings → 7), then go up</option>
+        <option value="screen">Lowest chat on screen now (no scrolling), then up</option>
+      </select></label>
+      <label class="check"><input id="sLastMine" type="checkbox"> Only chats where my message is the last one <span class="hint">(skip people who wrote last: they need a real answer)</span></label>
+      <label class="check"><input id="sGroups" type="checkbox"> Skip group chats</label>
+      <label class="check"><input id="dCheck" type="checkbox"> Stop when it reaches people who already got this message</label>
+      <div id="dOptions" class="grid2">
+        <label>Recognize them by<select id="sStopBy">
+          <option value="both">Name on my list and the message in the chat</option>
+          <option value="message">The message in the chat</option>
+          <option value="name">Name on my list only (fastest)</option>
+          <option value="off">Don't stop (just skip them)</option>
+        </select></label>
+        <label>Stop after this many in a row<input id="sStopAfter" type="number" min="1"></label>
+      </div>
+      <button class="small reset" data-reset="order">Reset this section</button>
     </div>
-    <label class="check"><input type="radio" name="limitMode" value="fixed"> The same number every day</label>
-    <label>Every day<input id="sCap" type="number" min="1"></label>
-    <label>Today only: follow up this many <span class="hint">(empty = use the plan above)</span><input id="sToday" type="number" min="1" placeholder="use the plan"></label>
-    <div id="planNow" class="hint"></div>
-  </div>
+  </details>
 
-  <div class="sec">
-    <h3>4 · Sending</h3>
-    <div class="grid2">
-      <label>Wait between chats, from (sec)<input id="sGapMin" type="number" min="0"></label>
-      <label>to (sec)<input id="sGapMax" type="number" min="0"></label>
-      <label>Wait after opening a chat (sec)<input id="sStep" type="number" min="0.3" step="0.1"></label>
+  <details class="sec" data-sec="names">
+    <summary><span class="sect">2 · Names</span><small class="sum" id="sum_names"></small></summary>
+    <div class="secbody">
+      <label>Word for numbers only (not saved in your phone)<input id="sWord" type="text" placeholder="po"></label>
+      <div class="hint">“Hi {first_name}!” becomes “Hi <span id="wordEx">po</span>!” for them, never “Hi +63917…!”.</div>
+      <label class="check"><input id="sTilde" type="checkbox"> If WhatsApp shows their own name with “~” (like ~Mark), use it: “Hi Mark!”</label>
+      <button class="small reset" data-reset="names">Reset this section</button>
     </div>
-    <label>Image and message<select id="sImgStyle">
-      <option value="one">One bubble: the image with the message under it</option>
-      <option value="two">Two bubbles: the message, then the image</option>
-    </select></label>
-    <label class="check"><input id="sImgReq" type="checkbox"> Don't send if the image fails to attach</label>
-    <label class="check"><input id="sFront" type="checkbox"> Bring WhatsApp Web to the front when I press Start</label>
-    <label class="check"><input id="sAwake" type="checkbox"> Keep the PC awake while it runs</label>
-    <label class="check"><input id="sTest" type="checkbox"> Test mode: fill in the message and image, but never press Send</label>
-  </div>
+  </details>
 
-  <div class="sec">
-    <h3>5 · When finished</h3>
-    <label>Then<select id="sFinish">
-      <option value="nothing">Do nothing</option>
-      <option value="closeTab">Close the WhatsApp Web tab</option>
-      <option value="closeChrome">Close Chrome</option>
-      <option value="shutdown">Shut down the computer</option>
-    </select></label>
-    <label>Countdown first (sec)<input id="sCountdown" type="number" min="10"></label>
-    <label class="check"><input id="sFinEnd" type="checkbox"> …when it ran out of chats</label>
-    <label class="check"><input id="sFinDaily" type="checkbox"> …when today's limit was reached</label>
-    <label class="check"><input id="sPC" type="checkbox"> Pop-up on this PC when it finishes or pauses</label>
-    <label class="check"><input id="sPhone" type="checkbox"> Notification on my phone (ntfy app)</label>
-    <label>ntfy topic<input id="sTopic" type="text" placeholder="e.g. rojie-followup-7342"></label>
-    <div class="row"><button id="testNotify" class="small">Send a test</button><span id="notifyOut" class="hint"></span></div>
-  </div>
-
-  <div class="sec">
-    <h3>6 · Campaign</h3>
-    <div class="hint">FollowUp remembers who already got the message, so nobody gets it twice. Start a new campaign to follow up everyone again (for example with a new promo).</div>
-    <div class="row"><button id="newCampaign" class="small danger">New campaign</button><span id="campaignInfo" class="hint"></span></div>
-  </div>
-  <div class="sec">
-    <h3>7 · Scrolling (How far)</h3>
-    <label class="check"><input type="radio" name="scrollHow" value="all"> How far: all the way to the bottom</label>
-    <label class="check"><input type="radio" name="scrollHow" value="count"> How far: this many scrolls</label>
-    <label>Number of scrolls<input id="scCount" type="number" min="1"></label>
-    <div class="grid2">
-      <label>Wait after each scroll (sec)<input id="scWait" type="number" min="0.3" step="0.1"></label>
-      <label>Before deciding it's the bottom, keep trying (sec)<input id="scPatience" type="number" min="0"></label>
+  <details class="sec" data-sec="perday">
+    <summary><span class="sect">3 · How many per day</span><small class="sum" id="sum_perday"></small></summary>
+    <div class="secbody">
+      <label class="check"><input type="radio" name="limitMode" value="ramp"> Grow by itself (warm-up, safest)</label>
+      <div class="grid5">
+        <label>Days 1–3<input id="r0" type="number" min="1"></label>
+        <label>Days 4–6<input id="r1" type="number" min="1"></label>
+        <label>Week 2<input id="r2" type="number" min="1"></label>
+        <label>Week 3<input id="r3" type="number" min="1"></label>
+        <label>After<input id="r4" type="number" min="1"></label>
+      </div>
+      <label class="check"><input type="radio" name="limitMode" value="fixed"> The same number every day</label>
+      <label>Every day<input id="sCap" type="number" min="1"></label>
+      <label>Today only: follow up this many <span class="hint">(empty = use the plan above)</span><input id="sToday" type="number" min="1" placeholder="use the plan"></label>
+      <div id="planNow" class="hint"></div>
+      <button class="small reset" data-reset="perday">Reset this section</button>
     </div>
-    <div class="hint">“How far” is used by the “Scroll chat list to the bottom” button and by Start from “as far as How far says”. When no more chats load, FollowUp nudges the list every 10 s for the time above before calling it the bottom.</div>
-  </div>
+  </details>
+
+  <details class="sec" data-sec="send">
+    <summary><span class="sect">4 · Sending</span><small class="sum" id="sum_send"></small></summary>
+    <div class="secbody">
+      <div class="grid2">
+        <label>Wait between chats, from (sec)<input id="sGapMin" type="number" min="0"></label>
+        <label>to (sec)<input id="sGapMax" type="number" min="0"></label>
+        <label>Wait after opening a chat (sec)<input id="sStep" type="number" min="0.3" step="0.1"></label>
+      </div>
+      <label>Image and message<select id="sImgStyle">
+        <option value="one">One bubble: the image with the message under it</option>
+        <option value="two">Two bubbles: the message, then the image</option>
+      </select></label>
+      <label class="check"><input id="sImgReq" type="checkbox"> Don't send if the image fails to attach</label>
+      <label class="check"><input id="sFront" type="checkbox"> Bring WhatsApp Web to the front when I press Start</label>
+      <label class="check"><input id="sLauncher" type="checkbox"> Tell me when Chrome wasn't opened with the FollowUp Chrome icon</label>
+      <label class="check"><input id="sAwake" type="checkbox"> Keep the PC awake while it runs</label>
+      <label class="check"><input id="sTest" type="checkbox"> Test mode: fill in the message and image, but never press Send</label>
+      <button class="small reset" data-reset="send">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="finish">
+    <summary><span class="sect">5 · When finished &amp; notifications</span><small class="sum" id="sum_finish"></small></summary>
+    <div class="secbody">
+      <label>Then<select id="sFinish">
+        <option value="nothing">Do nothing</option>
+        <option value="closeTab">Close the WhatsApp Web tab</option>
+        <option value="closeChrome">Close Chrome</option>
+        <option value="shutdown">Shut down the computer</option>
+      </select></label>
+      <label>Countdown first (sec)<input id="sCountdown" type="number" min="10"></label>
+      <div class="hint">Do this only when the run ended because…</div>
+      <label class="check"><input id="sFinAlready" type="checkbox"> …it reached people who already got this message</label>
+      <label class="check"><input id="sFinEnd" type="checkbox"> …it ran out of chats</label>
+      <label class="check"><input id="sFinDaily" type="checkbox"> …today's limit was reached</label>
+      <label class="check"><input id="sPC" type="checkbox"> Pop-up on this PC when it finishes or pauses</label>
+      <label class="check"><input id="sPhone" type="checkbox"> Notification on my phone (ntfy app)</label>
+      <label>ntfy topic<input id="sTopic" type="text" placeholder="e.g. rojie-followup-7342"></label>
+      <div class="row"><button id="testNotify" class="small">Send a test</button><span id="notifyOut" class="hint"></span></div>
+      <button class="small reset" data-reset="finish">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="buyers">
+    <summary><span class="sect">6 · Buyers (replies)</span><small class="sum" id="sum_buyers"></small></summary>
+    <div class="secbody">
+      <label class="check"><input type="radio" name="replyMode" value="ask"> Ask me first (I press Send) — safest</label>
+      <label class="check"><input type="radio" name="replyMode" value="auto"> Send the ready reply right away</label>
+      <label class="check"><input id="rAuto" type="checkbox"> Check for replies by itself every <input id="rMins" type="number" min="1" style="width:60px;display:inline-block"> minutes (also during a run)</label>
+      <label class="check"><input id="bLabelOn" type="checkbox"> WhatsApp Business: add a label to hot leads</label>
+      <label>Label name<input id="bLabelName" type="text"></label>
+      <button class="small reset" data-reset="buyers">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="scroll">
+    <summary><span class="sect">7 · Scrolling (How far)</span><small class="sum" id="sum_scroll"></small></summary>
+    <div class="secbody">
+      <label class="check"><input type="radio" name="scrollHow" value="all"> How far: all the way to the bottom</label>
+      <label class="check"><input type="radio" name="scrollHow" value="count"> How far: this many scrolls</label>
+      <label>Number of scrolls<input id="scCount" type="number" min="1"></label>
+      <div class="grid2">
+        <label>Wait after each scroll (sec)<input id="scWait" type="number" min="0.3" step="0.1"></label>
+        <label>Before deciding it's the bottom, keep trying (sec)<input id="scPatience" type="number" min="0"></label>
+      </div>
+      <div class="hint">“How far” is used by the “Scroll chat list to the bottom” button and by Start from “as far as How far says”. When no more chats load, FollowUp nudges the list every 10 s for the time above before calling it the bottom.</div>
+      <button class="small reset" data-reset="scroll">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="saving">
+    <summary><span class="sect">8 · Saving to your PC &amp; this account</span><small class="sum" id="sum_saving"></small></summary>
+    <div class="secbody">
+      <label>This WhatsApp account's name <span class="hint">(a different one in each Chrome profile, e.g. “WA Business”)</span><input id="sAccount" type="text"></label>
+      <label class="check"><input id="bkOn" type="checkbox"> Save who got each message to a folder on my PC</label>
+      <label>Folder<input id="bkFolder" type="text"></label>
+      <div id="bkWhere" class="hint"></div>
+      <label class="check"><input id="bkLog" type="checkbox"> Also save the Log there every day (log-YYYY-MM-DD.txt)</label>
+      <div class="row"><button id="bkNow" class="small">Save names now</button><button id="helperCheck" class="small">Check Windows helper</button></div>
+      <div id="bkStatus" class="hint"></div>
+      <button class="small reset" data-reset="saving">Reset this section</button>
+    </div>
+  </details>
+
+  <details class="sec" data-sec="campaign">
+    <summary><span class="sect">9 · Campaign &amp; shortcuts</span><small class="sum" id="sum_campaign"></small></summary>
+    <div class="secbody">
+      <div class="hint">FollowUp remembers who already got the message, so nobody gets it twice. Start a new campaign to follow up everyone again (for example with a new promo).</div>
+      <div class="row"><button id="newCampaign" class="small danger">New campaign</button><span id="campaignInfo" class="hint"></span></div>
+      <h3>Keyboard shortcuts</h3>
+      <ol id="keys" class="keys"></ol>
+      <button id="keysEdit" class="small">Change shortcuts</button>
+    </div>
+  </details>
 </section>
 
 <script src="wa-engine.js"></script>

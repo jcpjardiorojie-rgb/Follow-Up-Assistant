@@ -38,7 +38,7 @@ async function hiddenReason() {
 async function sendToWa(cmd, extra) {
   const tab = await findWaTab();
   if (!tab) return { ok: false, noTab: true, message: "Open WhatsApp Web (press “Open WhatsApp Web”). The panel connects by itself." };
-  if (cmd === "start" || cmd === "resume") {
+  if (cmd === "start" || cmd === "resume" || cmd === "toggleRun") {
     const { settings } = await chrome.storage.local.get("settings");
     if (!settings || settings.frontOnStart !== false) await frontIfHidden(tab);
   }

@@ -93,7 +93,7 @@
       r.dataset.id = c.id;
       const av = c.icon ? `<div class="av"><span data-icon="default-group">👥</span></div>` : c.name.startsWith("+") ? `<div class="av"><span data-icon="default-user">👤</span></div>` : `<div class="av"><img src="${AV(i)}" width="48" height="48" alt=""></div>`;
       r.innerHTML = `<div class="cell" role="gridcell" tabindex="0">${av}<div class="meta"><div class="top"><span dir="auto" class="name"></span><span class="time">10:4${i % 10}</span></div>` +
-        `<div class="prev">${l.me ? '<span data-icon="msg-dblcheck">✓✓</span>' : ""}<span dir="ltr" class="pt"></span></div></div></div>`;
+        `<div class="prev">${l.me ? '<span data-icon="msg-dblcheck">✓✓</span>' : ""}<span dir="ltr" class="pt"></span><button class="rowmenu" aria-label="Open chat context menu"><span data-icon="down">⌄</span></button></div></div></div>`;
       const nm = r.querySelector(".name"); nm.textContent = c.name; nm.setAttribute("title", c.name);
       const pt = r.querySelector(".pt"); const ptxt = (c.group && !l.me ? "Ana: " : "") + (l.image ? "📷 " : "") + (l.text || "Photo"); pt.textContent = ptxt; pt.setAttribute("title", ptxt);
       grid.appendChild(r);
@@ -115,9 +115,47 @@
   $("#grid").addEventListener("click", (e) => {
     const r = e.target.closest("[role=listitem]");
     if (!r) return;
+    if (e.target.closest(".rowmenu")) { chatMenu(convs.find((c) => c.id === r.dataset.id), e.target.closest(".rowmenu")); return; }
     open(convs.find((c) => c.id === r.dataset.id));
   });
 
+  // WhatsApp Business chat menu: Label chat → tick a label → Save. flags.noLabels: normal WhatsApp (no labels).
+  mock.labeled = [];
+  function chatMenu(c, btn) {
+    document.querySelectorAll(".cmenu").forEach((m) => m.remove());
+    const m = document.createElement("div");
+    m.className = "cmenu"; m.setAttribute("role", "application");
+    m.style.cssText = "position:fixed;left:300px;top:120px;background:#fff;box-shadow:0 2px 10px #0004;border-radius:8px;padding:6px 0;z-index:9";
+    const items = ["Archive chat", "Mute notifications", ...(mock.flags.noLabels ? [] : ["Label chat"]), "Delete chat", "Pin chat"];
+    m.innerHTML = "<ul style='list-style:none;margin:0;padding:0'>" + items.map((t) => `<li role="button" style="padding:8px 16px;cursor:pointer">${t}</li>`).join("") + "</ul>";
+    document.body.appendChild(m);
+    m.addEventListener("click", (e) => {
+      const li = e.target.closest("li"); if (!li) return;
+      m.remove();
+      if (li.textContent === "Label chat") labelDialog(c);
+    });
+  }
+  function labelDialog(c) {
+    const d = document.createElement("div");
+    d.className = "dialog"; d.setAttribute("role", "dialog");
+    const labels = ["New customer", "Hot lead", "Pending payment"];
+    d.innerHTML = "<div>Label items</div>" + labels.map((l) => `<div role="checkbox" aria-checked="false" class="lab" style="padding:6px;cursor:pointer"><span>${l}</span></div>`).join("") +
+      `<button class="save">Save</button>`;
+    document.body.appendChild(d);
+    d.querySelectorAll(".lab").forEach((x) => x.addEventListener("click", () => x.setAttribute("aria-checked", x.getAttribute("aria-checked") === "true" ? "false" : "true")));
+    d.querySelector(".save").addEventListener("click", () => {
+      d.querySelectorAll(".lab[aria-checked=true]").forEach((x) => mock.labeled.push({ name: c.name, label: x.textContent }));
+      d.remove();
+    });
+  }
+  // A customer answers: their message becomes the last one, and the chat goes to the top.
+  mock.reply = (name, text) => {
+    const c = convs.find((x) => x.name === name);
+    c.msgs.push({ me: false, text });
+    c.ts = ++clock + 300000;
+    renderList();
+    if (mock.selected === c) renderMsgs();
+  };
   function open(c) {
     mock.opened.push(c.name);
     $("#mainwrap").innerHTML = "";

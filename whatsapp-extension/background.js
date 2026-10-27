@@ -2,6 +2,20 @@
 chrome.runtime.onInstalled.addListener(() => { chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {}); });
 chrome.runtime.onStartup.addListener(() => { chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {}); });
 
+importScripts("connect.js");
+
+// Keyboard shortcuts (change them at chrome://extensions/shortcuts).
+const COMMANDS = { "toggle-run": "toggleRun", stop: "stopAll", "toggle-scroll": "toggleScroll" };
+async function handleCommand(command) {
+  const cmd = COMMANDS[command];
+  if (!cmd) return { ok: false, message: "Unknown shortcut" };
+  const r = await sendToWa(cmd);
+  delete r.tab;
+  return r;
+}
+self.handleCommand = handleCommand; // used by the automated tests
+chrome.commands.onCommand.addListener((command) => { handleCommand(command); });
+
 // "When the run is finished": the page counts down, then asks for the action here.
 // Shutdown uses the same Windows helper as FollowUp Copilot (windows\Setup-FollowUp.bat).
 const HELPER = "com.rojie.followup_copilot";
@@ -53,6 +67,17 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   if (msg.type === "wa-notify") {
     notifyAll(msg).then(reply, (e) => reply({ ok: false, error: String(e && e.message || e) }));
+    return true;
+  }
+  // Saving names and the Log to a folder on your PC goes through the same Windows helper as the shutdown.
+  if (msg.type === "wa-file") {
+    const { type, ...req } = msg;
+    chrome.runtime.sendNativeMessage(HELPER, req).then((r) => reply(r || { ok: false, error: "The helper didn't answer" }),
+      (e) => reply({ ok: false, error: String(e && e.message || e) }));
+    return true;
+  }
+  if (msg.type === "wa-helper") {
+    chrome.runtime.sendNativeMessage(HELPER, { action: "ping" }).then((r) => reply(r || { ok: false }), (e) => reply({ ok: false, error: String(e && e.message || e) }));
     return true;
   }
   if (msg.type === "wa-awake") {

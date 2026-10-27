@@ -35,7 +35,7 @@ function Get-FollowUpIds {
                 $entry = $ext['settings'][$id]
                 if (-not $entry.ContainsKey('path')) { continue }
                 $manifest = Join-Path ([string]$entry['path']) 'manifest.json'
-                if ((Test-Path $manifest) -and ((Get-Content $manifest -Raw) -match 'FollowUp Copilot')) { $ids += $id }
+                if ((Test-Path $manifest) -and ((Get-Content $manifest -Raw) -match 'FollowUp Copilot|WhatsApp FollowUp-Assistant')) { $ids += $id }
             }
         }
     }
@@ -45,9 +45,9 @@ function Get-FollowUpIds {
 $ids = Get-FollowUpIds
 if ($ids.Count -eq 0) {
     Write-Host ''
-    Write-Host "Couldn't find FollowUp Copilot in Chrome automatically." -ForegroundColor Yellow
+    Write-Host "Couldn't find FollowUp Copilot or WhatsApp FollowUp-Assistant in Chrome automatically." -ForegroundColor Yellow
     Write-Host '1. In Chrome, open  chrome://extensions'
-    Write-Host '2. On the "FollowUp Copilot by Rojie Jardio" card, copy the ID (32 letters).'
+    Write-Host '2. On the "FollowUp Copilot" (or "WhatsApp FollowUp-Assistant") card, copy the ID (32 letters).'
     $typed = (Read-Host '3. Paste the ID here and press Enter').Trim()
     if ($typed -notmatch '^[a-p]{32}$') { Write-Host 'That ID does not look right. Run the setup again.' -ForegroundColor Red; exit 1 }
     $ids = @($typed)

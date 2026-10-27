@@ -63,45 +63,11 @@ Safety rules built into both versions:
    **Open my inbox** takes you straight there, and the app refuses to run on a different Facebook Page
    by mistake. The badge at the top says **Ready** when it's connected.
 
-## FollowUp for WhatsApp 1.1: scrolling
+## WhatsApp: a separate app
 
-* **"Scroll chat list to the bottom"** button (top of the panel), with Pause / Resume and **Stop scrolling**.
-* **Settings → 7 · Scrolling (How far)**: all the way to the bottom, or a number of scrolls; wait after each scroll;
-  and **"Before deciding it's the bottom, keep trying"** (60 s): when no more chats load, it nudges the list every 10 s first.
-* **Start from** now has two Bottom choices: scroll **all the way** down, or **as far as "How far" says**, then go up.
-
-![Scroll button](docs/screenshots/wa-scroll-button.png)
-![Scrolling settings](docs/screenshots/wa-settings-scrolling.png)
-
-## NEW: FollowUp for WhatsApp 1.0 (separate extension, folder `whatsapp-extension`)
-
-Follows up your **existing WhatsApp chats** on WhatsApp Web, one by one, like FollowUp Copilot does on Business Suite.
-FollowUp Copilot (Business Suite) is not changed at all.
-
-* **Your message with the first name.** Saved contacts get their first name ("Hi Joy!"). Numbers only (not saved)
-  get **your own word** from Settings → 2 ("Hi po!", "Hi Ma'am/Sir!"), never "Hi +63917…!". Optional: use the name an
-  unsaved person shows with "~" ("~Mark" → "Hi Mark!").
-* **Your image**: one bubble (image with the message under it) or two bubbles (message, then image).
-* **Safe by default**: only chats where your message is the last one, group chats skipped, random 30–90 s between chats,
-  stops right away if WhatsApp shows a warning, pauses after 3 problems in a row.
-* **How many per day** (Settings → 3): a warm-up plan that grows by itself (50 → 80 → 120 → 160 → 200, you can change the
-  numbers), or the same number every day, plus **"Today only"** to choose today's number.
-* **Remembers who already got it** (no one gets it twice); "New campaign" to start over with a new promo.
-* Start from the newest or the oldest chats, Test mode, Check page, Activity, Problems (what/why/fix), Copy for Claude,
-  PC/phone notifications, keep the PC awake, and When finished (close the tab, close Chrome or shut down).
-
-**Install (once per Chrome profile):**
-1. Make two Chrome profiles (profile picture at the top right of Chrome → **Add**): for example "WhatsApp" and "WA Business".
-2. In each profile: `chrome://extensions` → **Developer mode** on → **Load unpacked** → choose the `whatsapp-extension` folder.
-3. Open `web.whatsapp.com` in that profile and link it: on your phone, WhatsApp → **Linked devices** → **Link a device** → scan the code.
-   Use the normal WhatsApp app for one profile and the WhatsApp Business app for the other.
-4. Click the green FollowUp icon: the panel opens next to WhatsApp Web. Paste your message and choose your image.
-5. First time: Settings → 4 → tick **Test mode**, press Start, watch a few chats get filled in, then Stop. Press **Check page**:
-   every line should say ✓. Then untick Test mode and press Start.
-6. For "Shut down the computer": double-click `windows\Setup-FollowUp.bat` once more after installing it.
-
-![WhatsApp panel](docs/screenshots/wa-panel-message.png)
-![How many per day](docs/screenshots/wa-settings-per-day.png)
+**WhatsApp FollowUp-Assistant** is its own download (`WhatsApp-FollowUp-Assistant.zip`), with its own icon.
+Its code is in the `whatsapp-extension` folder and its guide is [docs/WhatsApp-README.md](docs/WhatsApp-README.md).
+Nothing in this Business Suite extension changed for it. The Windows setup (`windows\Setup-FollowUp.bat`) now finds both apps.
 
 ## New in 1.8.4
 
